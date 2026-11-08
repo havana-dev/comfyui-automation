@@ -40,6 +40,24 @@ class ComfyClient:
             raise ComfyError(f"API 연결 실패 ({self.base_url}): {exc}. Desktop 실행 상태/포트/실행 환경의 접근 권한을 확인하세요.") from exc
         return body if binary else json.loads(body)
 
+    def upload_image(self, path):
+        """Upload a uniquely named copy; never overwrite the input image."""
+        boundary = uuid.uuid4().hex
+        filename = f"edit_reference_{uuid.uuid4().hex}.png"
+        body = (f'--{boundary}\r\nContent-Disposition: form-data; name="image"; '
+                f'filename="{filename}"\r\nContent-Type: image/png\r\n\r\n').encode()
+        body += Path(path).read_bytes() + f"\r\n--{boundary}--\r\n".encode()
+        req = Request(self.base_url + "/upload/image", data=body,
+                      headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
+        try:
+            with self.opener.open(req, timeout=30) as response:
+                result = json.loads(response.read())
+        except (URLError, OSError, ValueError) as exc:
+            raise ComfyError(f"Reference upload failed: {exc}") from exc
+        if not result.get("name"):
+            raise ComfyError(f"Reference upload failed: {result}")
+        return "/".join(part for part in (result.get("subfolder"), result["name"]) if part)
+
     def check(self, workflow):
         stats = self.request("/system_stats")
         info = self.request("/object_info")
@@ -158,6 +176,54 @@ def generate_image(client, workflow, prompt, output_dir, timeout=900, seed=None,
     except OSError as exc:
         raise ComfyError(f"이미지는 저장됐지만 메타데이터 저장에 실패했습니다. prompt_id={prompt_id}, files={files}: {exc}") from exc
     return {"prompt_id": prompt_id, "seed": seed, "files": files, "metadata_file": metadata_file, "character": character}
+
+
+def edit_image(client, workflow, bindings, reference_image, instruction, output_dir,
+               timeout=900, seed=None, *, character=None):
+    """Run a configured official Klein API graph once, with no retries."""
+    if not instruction.strip():
+        raise ComfyError("Edit instruction is required.")
+    reference = Path(reference_image).resolve()
+    if not reference.is_file() or not reference.read_bytes().startswith(b"\x89PNG\r\n\x1a\n"):
+        raise ComfyError(f"Reference PNG missing or invalid: {reference}")
+    seed = secrets.randbelow(2**63) if seed is None else seed
+    if not isinstance(seed, int) or not 0 <= seed < 2**64:
+        raise ComfyError("seed must be an integer in [0, 2**64).")
+    graph = json.loads(json.dumps(workflow))
+    try:
+        image_node, image_field = bindings["reference_image"]
+        text_node, text_field = bindings["instruction"]
+        seed_node, seed_field = bindings["seed"]
+        for node, field in ((image_node, image_field), (text_node, text_field), (seed_node, seed_field)):
+            if field not in graph[node]["inputs"]:
+                raise KeyError(f"{node}.{field}")
+        if graph[image_node]["class_type"] != "LoadImage" or image_field != "image":
+            raise ValueError("reference_image must bind to LoadImage.image")
+    except (KeyError, ValueError, TypeError) as exc:
+        raise ComfyError(f"Edit workflow bindings are not ready: {exc}") from exc
+    graph[text_node]["inputs"][text_field] = instruction
+    graph[seed_node]["inputs"][seed_field] = seed
+    # The unique upload does not exist in LoadImage's enum until uploaded.
+    preflight = json.loads(json.dumps(graph))
+    del preflight[image_node]["inputs"][image_field]
+    client.check(preflight)
+    folder = prepare_output(character_folder(output_dir, character) / "edits" / uuid.uuid4().hex)
+    graph[image_node]["inputs"][image_field] = client.upload_image(reference)
+    response = client.request("/prompt", {"prompt": graph, "client_id": str(uuid.uuid4())})
+    if response.get("node_errors") or not response.get("prompt_id"):
+        raise ComfyError(f"Edit submission failed: {response}")
+    prompt_id = response["prompt_id"]
+    entry = client.wait(prompt_id, timeout)
+    files = client.save(prompt_id, entry, folder)
+    try:
+        metadata = save_metadata(folder, prompt_id, graph, files, character, entry,
+                                 datetime.now(timezone.utc).isoformat(),
+                                 prompt=instruction, seed=seed,
+                                 extra={"operation": "edit_image", "reference_image": str(reference)})
+    except OSError as exc:
+        raise ComfyError(f"Images saved but edit metadata failed: prompt_id={prompt_id}, files={files}: {exc}") from exc
+    return {"prompt_id": prompt_id, "seed": seed, "files": files,
+            "metadata_file": metadata, "character": character, "reference_image": str(reference)}
 
 
 def main():

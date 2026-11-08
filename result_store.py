@@ -28,7 +28,7 @@ def output_folder(output_dir, character=None, output_subdir=None):
     return folder
 
 
-def save_metadata(folder, prompt_id, workflow, files, character, entry, completed_at):
+def save_metadata(folder, prompt_id, workflow, files, character, entry, completed_at, *, prompt=None, seed=None, extra=None):
     # Prefer the server completion timestamp, including when the result was cached.
     generated_at = completed_at
     time_source = "client_observed_completion"
@@ -45,14 +45,15 @@ def save_metadata(folder, prompt_id, workflow, files, character, entry, complete
         "schema_version": 1,
         "prompt_id": prompt_id,
         "character": character,
-        "prompt": workflow["27"]["inputs"]["text"],
-        "seed": workflow["3"]["inputs"]["seed"],
+        "prompt": workflow["27"]["inputs"]["text"] if prompt is None else prompt,
+        "seed": workflow["3"]["inputs"]["seed"] if seed is None else seed,
         "models": models,
         "generated_at": generated_at,
         "generated_at_source": time_source,
         "files": files,
         "workflow": workflow,
     }
+    metadata.update(extra or {})
     target = Path(folder) / f"{prompt_id}.json"
     temporary = target.with_name(f".{uuid.uuid4().hex}.part")
     try:

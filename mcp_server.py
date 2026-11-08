@@ -18,6 +18,7 @@ from character_store import CharacterStore
 
 from comfy_client import ComfyClient, ComfyError, ROOT, load_workflow
 from comfy_client import generate_image as generate_local_image
+from comfy_client import edit_image as edit_local_image
 
 logger = logging.getLogger(__name__)
 generation_lock = threading.Lock()
@@ -83,7 +84,7 @@ mcp = FastMCP(
         "Only generate an image when the user requests one. "
         "generate_image saves PNG and JSON files on this Windows PC and returns paths. "
         "It can take several minutes. On timeout, do not automatically resubmit: "
-        "the ComfyUI job may still be running. For named characters, call get_character first. If missing, call save_character with only user-provided facts; never invent permanent appearance, age, era or style. Translate the Korean request and known profile facts into an English prompt yourself, honoring current outfit/style requests without overwriting the profile. Then call generate_image with that prompt and the profile folder_name as character. Unknown facts stay unspecified. reference_images are stored paths only and are NOT used for image conditioning. Registered names, aliases, IDs and folder names resolve to the same character folder. Unknown names remain folder labels. Character is not a prompt addition."
+        "the ComfyUI job may still be running. For named characters, call get_character first. If missing, call save_character with only user-provided facts; never invent permanent appearance, age, era or style. Translate the Korean request and known profile facts into an English prompt yourself, honoring current outfit/style requests without overwriting the profile. Then call generate_image with that prompt and the profile folder_name as character. Unknown facts stay unspecified. For requested edits, use edit_image with the registered reference_images[0]; generate_image does not use references. Registered names, aliases, IDs and folder names resolve to the same character folder. Unknown names remain folder labels. Character is not a prompt addition."
     ),
 )
 
@@ -130,6 +131,47 @@ def generate_sync(prompt, character, seed):
         generation_lock.release()
 
 
+def edit_sync(reference_image, instruction, character, seed):
+    if not generation_lock.acquire(blocking=False):
+        raise ComfyError("This MCP process is already generating an image. Wait for it to finish.")
+    try:
+        config = json.loads((ROOT / "config.json").read_text(encoding="utf-8-sig"))
+        profile = character_store().get(character) if character else None
+        if reference_image is None:
+            references = profile.get("reference_images", []) if profile else []
+            if not references:
+                raise ComfyError("No registered reference image; provide reference_image or a character with reference_images[0].")
+            reference_image = references[0]
+        settings = config.get("edit_workflow", {})
+        path = ROOT / settings.get("path", "workflows/flux2_klein_4b_fp8_edit_api.json")
+        if not path.is_file():
+            raise ComfyError(f"FLUX.2 Klein 4B FP8 edit workflow not ready: {path}. Nothing will be downloaded or generated.")
+        workflow = load_workflow(path)
+        bindings = settings.get("bindings", {})
+        if not all(key in bindings for key in ("reference_image", "instruction", "seed")):
+            raise ComfyError("Edit workflow bindings missing: reference_image, instruction, seed are required.")
+        timeout = float(config.get("timeout_seconds", 900))
+        if not 0 < timeout < float("inf"):
+            raise ComfyError("timeout_seconds must be finite and positive")
+        client = ComfyClient(config["base_url"])
+        ensure_backend(client)
+        return edit_local_image(client, workflow, bindings, reference_image, instruction,
+                                config["output_dir"], timeout, seed,
+                                character=profile["folder_name"] if profile else character)
+    finally:
+        generation_lock.release()
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False))
+async def edit_image(reference_image: str | None = None, instruction: str = "",
+                     character: str | None = None, seed: int | None = None) -> dict:
+    """Edit one reference PNG using configured FLUX.2 Klein 4B FP8 API workflow.
+    If reference_image is omitted, use character.reference_images[0]. Preserve originals.
+    Returns separate PNG and JSON paths. Never automatically retry after timeout.
+    """
+    return await run_tool(edit_sync, reference_image, instruction, character, seed)
+
+
 async def run_tool(function, *args):
     try:
         # Keep protocol handling responsive while the existing synchronous client waits.
@@ -170,7 +212,7 @@ async def save_character(name: str, name_ko: str | None = None, name_en: str | N
                          default_style: str | None = None,
                          reference_images: list[str] | None = None) -> dict:
     """Create/update only supplied facts and create an image folder. Omitted fields are preserved.
-    Age is free text. Reference image paths are stored only, never loaded or used for generation.
+    Age is free text. Reference paths are stored only; edit_image can load them for editing.
     Use returned folder_name as generate_image.character after composing an English prompt.
     """
     fields = dict(name_ko=name_ko, name_en=name_en, aliases=aliases, appearance=appearance,

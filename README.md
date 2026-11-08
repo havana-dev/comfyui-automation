@@ -112,3 +112,29 @@ MCP의 `get_character(name)`은 한글/영문 이름 또는 별칭으로 조회�
 `--output-subdir`를 명시하면 기존처럼 해당 하위 경로 안에 캐릭터 폴더를 둡니다. 이름을 생략하면 기본 저장 경로를 유지합니다. save_character는 전달된 한글/영문 이름과 별칭 중 기존 프로필과 일치하는 항목으로 갱신 대상을 찾으며, 서로 다른 프로필에 걸친 이름은 거부합니다.
 
 개인 프로필인 `characters/`와 생성 이미지는 Git에서 제외됩니다. 테스트는 임시 가상 캐릭터만 사용합니다.
+
+### Reference editing (MCP)
+
+`edit_image(reference_image=None, instruction="...", character="Example Character", seed=None)`
+uses the registered character's `reference_images[0]` when no explicit PNG path is supplied.
+It preserves character profiles and source files; results go into the character folder's
+`edits/<unique-run>/` directory with PNG and JSON (instruction, seed, reference path, full API graph).
+Submission and polling use the existing client and shared generation lock. Timeouts never retry.
+
+Copy `config.example.json` to the ignored `config.json` and set your local output and backend paths.
+The example paths under `backend` are placeholders for your existing installation.
+
+The supplied FLUX.2 Klein 4B FP8 API graph is `workflows/flux2_klein_edit_api.json`.
+`config.json` connects its actual inputs:
+
+```json
+{"path": "workflows/flux2_klein_edit_api.json",
+ "bindings": {"reference_image": ["76", "image"],
+              "instruction": ["75:74", "text"],
+              "seed": ["75:73", "noise_seed"]}}
+```
+
+The graph's model filenames, reference conditioning connections and image sizing are preserved.
+Missing graph/bindings produce an explicit error; unavailable nodes/models are checked via
+`/object_info` before uploading or submitting. Nothing is downloaded or installed.
+Existing `generate_image` behavior and background backend startup remain unchanged.
