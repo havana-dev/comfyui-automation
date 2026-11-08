@@ -15,6 +15,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
 from character_store import CharacterStore
+from character_draft import prepare_draft, create_draft
 
 from comfy_client import ComfyClient, ComfyError, ROOT, load_workflow
 from comfy_client import generate_image as generate_local_image
@@ -86,7 +87,7 @@ mcp = FastMCP(
         "For a new scene of a registered character, call get_character, translate the user's scene and known profile facts into an English scene_description, and use create_character_scene. It validates the official reference_v1.png; never use a previous output for an independent scene. Do not require the user to write English. Identity/style preservation is best effort. "
         "generate_image saves PNG and JSON files on this Windows PC and returns paths. "
         "It can take several minutes. On timeout, do not automatically resubmit: "
-        "the ComfyUI job may still be running. For named characters, call get_character first. If missing, call save_character with only user-provided facts; never invent permanent appearance, age, era or style. Translate the Korean request and known profile facts into an English prompt yourself, honoring current outfit/style requests without overwriting the profile. For text-only generation without official character reference conditioning, call generate_image with that prompt and the profile folder_name as character. Unknown facts stay unspecified. For requested edits, use edit_image with the intended edit source; generate_image does not use references. Registered names, aliases, IDs and folder names resolve to the same character folder. Unknown names remain folder labels. Character is not a prompt addition."
+        "the ComfyUI job may still be running. For named characters, call get_character first. For a new character without reference images, use create_character_draft (Qwen Image 2.1 T2I) with user-provided character_settings and an English prompt composed by you from the Korean request. Do not ask the user to write English. Drafts are pending approval, not registered characters; never call save_character or register reference_v1.png before explicit user approval. Never invent permanent appearance, age, era or style. Translate the Korean request and known profile facts into an English prompt yourself, honoring current outfit/style requests without overwriting the profile. For other general text-only generation, use generate_image. Unknown facts stay unspecified. For requested edits, use edit_image with the intended edit source; generate_image does not use references. Registered names, aliases, IDs and folder names resolve to the same character folder. Unknown names remain folder labels. Character is not a prompt addition."
     ),
 )
 
@@ -182,6 +183,35 @@ async def edit_image(reference_image: str | None = None, instruction: str = "",
     Returns separate PNG and JSON paths. Never automatically retry after timeout.
     """
     return await run_tool(edit_sync, reference_image, instruction, character, seed)
+
+
+def create_character_draft_sync(character_settings, prompt, seed):
+    if not generation_lock.acquire(blocking=False):
+        raise ComfyError("This MCP process is already generating an image. Wait for it to finish.")
+    try:
+        config = json.loads((ROOT / "config.json").read_text(encoding="utf-8-sig"))
+        timeout = float(config.get("timeout_seconds", 900))
+        if not 0 < timeout < float("inf"):
+            raise ComfyError("timeout_seconds must be finite and positive")
+        prepared = prepare_draft(character_settings, prompt, seed)
+        client = ComfyClient(config["base_url"])
+        ensure_backend(client)
+        return create_draft(client, prepared, config["output_dir"], timeout)
+    finally:
+        generation_lock.release()
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False))
+async def create_character_draft(character_settings: dict, prompt: str, seed: int | None = None) -> dict:
+    """Generate one new character candidate with Qwen Image 2.1 T2I, without references.
+    character_settings contains only user-provided facts (e.g. name, appearance, age,
+    era, outfit, accessories, style). The calling assistant composes prompt in English
+    from those facts and the Korean request; never require English from the user.
+    Saves PNG/JSON under drafts/<temporary ID>, with pending_approval status.
+    Does not register a character or reference_v1.png. Explicit user approval is
+    required before a separate registration action. Never automatically retry.
+    """
+    return await run_tool(create_character_draft_sync, character_settings, prompt, seed)
 
 
 def create_character_scene_sync(character, scene_description, seed, pose_image):

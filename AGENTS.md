@@ -11,6 +11,8 @@
 
 ## 도구 선택
 
+- 참조 이미지가 없는 신규 캐릭터의 첫 이미지에는 기본적으로 Qwen Image 2.1 T2I의 `create_character_draft(character_settings, prompt, seed?)`를 사용한다. `character_settings`에는 사용자가 제공한 설정만 담고, Codex가 한국어 요청의 외형·의상·장신구·시대·그림체·장면을 영어 `prompt`로 자동 구성한다. 사용자에게 영어 작성을 요구하지 않으며 도구 자체에는 번역기가 없다.
+- 초안은 `drafts/<임시 식별자>/`에 PNG와 JSON으로 저장되며 `pending_approval` 상태이다. 사용자가 결과를 명시적으로 승인하고 등록을 요청하기 전에는 `save_character` 호출, 공식 캐릭터 등록, `reference_v1.png` 생성·교체를 하지 않는다. 불만족한 초안도 보존하고 자동 재생성하지 않는다.
 - 기존 이미지의 표정, 머리 길이, 의상 등 일부를 수정하거나 원본의 얼굴·구도·세부 특징을 유지해야 하는 요청은 `edit_image`를 사용한다. 변경할 부분과 유지할 부분을 영어 지시문에 명확히 적는다.
 - 등록된 캐릭터의 새로운 배경·포즈·행동 장면은 `create_character_scene(character, scene_description, seed?, pose_image?)`를 사용한다. 먼저 `get_character`로 조회하고, Codex가 한국어 요청과 저장된 외형·장신구·시대·그림체를 영어 `scene_description`으로 구성한다. 사용자에게 영어 프롬프트 작성을 요구하지 않는다. 도구 내부에 번역 모델이 있는 것은 아니다.
 - 새 장면은 등록된 공식 `reference_v1.png`를 서버가 검증하여 사용한다. 순서가 첫 번째라는 이유만으로 임의 이미지를 공식 참조로 간주하지 않는다. 검증 실패 시 중단하며 이전 생성 결과나 다른 생성 도구로 대체하지 않는다.

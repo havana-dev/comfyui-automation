@@ -153,6 +153,28 @@ Codex는 이 프로젝트의 `AGENTS.md`를 작업 지침으로 사용합니다.
 `AGENTS.md`의 규칙이 자동 적용되지 않으므로, 같은 동작을 원하면 해당 규칙을 Claude Desktop의
 프로젝트 지침이나 대화 지침에 별도로 제공해야 합니다.
 
+### 신규 캐릭터 첫 이미지 (승인 전 초안)
+
+참조 없는 신규 캐릭터의 기본 경로는
+`create_character_draft(character_settings, prompt, seed=None)`이며 Qwen Image 2.1 T2I를 사용합니다.
+설정은 사용자 제공 사실을 담은 객체이고, 영어 `prompt`는 Codex가 한국어 요청과 설정으로
+구성합니다. 서버에 번역기는 없습니다. 예: `character_settings={"appearance": "검은 머리"}`,
+`prompt="An illustration of a character with black hair."`.
+
+원본 `workflows/qwen21_text_to_image_api.json`은 변경하지 않습니다. 실행용 그래프의
+`459:452` (`TextEncodeQwenImage21`)에 영어 prompt를 직접 전달하고 예시 negative_prompt는
+비웁니다. `459:458`의 seed, `459:456`의 batch_size=1, `461`의 PNG 출력을 사용합니다.
+해상도는 원본 `13` (`ResolutionSelector`)의 정사각형 1MP 설정을 유지합니다.
+샘플 프롬프트·스위치·미리보기·TextGenerate 및 그 전용 모델 분기는 실행에서 제외합니다.
+기존 ComfyClient의 검사·단일 제출·대기·PNG 저장과 JSON 저장 함수를 재사용합니다.
+
+출력은 `output_dir/drafts/draft-<UUID>/` 아래 새 폴더에 저장됩니다. JSON에는 설정,
+영어 프롬프트, seed, 실제 그래프·모델, 임시 ID와 `pending_approval` 상태를 기록합니다.
+공식 캐릭터 데이터나 `reference_v1.png`를 만들지 않으며 승인·등록 요청 전에는
+`save_character`를 호출하지 않습니다. 실패·시간 초과 시 자동 재시도하지 않습니다.
+일반 `generate_image`의 Z-Image 설정과 기존 scene/edit/get/save 도구는 유지됩니다.
+기존 JSON·모델·캐릭터 데이터는 수정하지 않습니다. MCP 재시작 후 새 도구가 노출됩니다.
+
 ### Qwen Image 2.1 캐릭터 새 장면
 
 `create_character_scene(character, scene_description, seed=None, pose_image=None)`은
