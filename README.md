@@ -138,3 +138,9 @@ The graph's model filenames, reference conditioning connections and image sizing
 Missing graph/bindings produce an explicit error; unavailable nodes/models are checked via
 `/object_info` before uploading or submitting. Nothing is downloaded or installed.
 Existing `generate_image` behavior and background backend startup remain unchanged.
+
+### 클라이언트별 이미지 생성 지침
+
+Codex는 이 프로젝트의 `AGENTS.md`를 작업 지침으로 사용합니다. Claude Desktop에서는
+`AGENTS.md`의 규칙이 자동 적용되지 않으므로, 같은 동작을 원하면 해당 규칙을 Claude Desktop의
+프로젝트 지침이나 대화 지침에 별도로 제공해야 합니다.
