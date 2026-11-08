@@ -124,6 +124,12 @@ def load_workflow(path):
     return workflow
 
 
+def character_folder(output_dir, character=None, output_subdir=None):
+    from character_store import CharacterStore
+    profile = CharacterStore(ROOT / "characters", output_dir).get(character) if character is not None else None
+    return output_folder(output_dir, profile["folder_name"] if profile else character, output_subdir)
+
+
 def generate_image(client, workflow, prompt, output_dir, timeout=900, seed=None, width=1024, height=1024, *, character=None, output_subdir=None):
     if not prompt.strip():
         raise ComfyError("프롬프트를 입력하세요.")
@@ -136,7 +142,7 @@ def generate_image(client, workflow, prompt, output_dir, timeout=900, seed=None,
     workflow["27"]["inputs"]["text"] = prompt
     workflow["3"]["inputs"]["seed"] = seed
     workflow["13"]["inputs"].update(width=width, height=height)
-    folder = output_folder(output_dir, character, output_subdir)
+    folder = character_folder(output_dir, character, output_subdir)
     client.check(workflow)
     prepare_output(folder)  # Fail before enqueueing if destination is unwritable.
     result = client.request("/prompt", {"prompt": workflow, "client_id": str(uuid.uuid4())})
@@ -177,7 +183,7 @@ def main():
                 parser.error("fetch에는 --prompt-id가 필요합니다.")
             prompt_id = str(uuid.UUID(args.prompt_id))
             entry = client.wait(prompt_id, timeout)
-            folder = output_folder(config["output_dir"], args.character, args.output_subdir)
+            folder = character_folder(config["output_dir"], args.character, args.output_subdir)
             result = {"prompt_id": prompt_id, "files": client.save(prompt_id, entry, folder)}
         else:
             workflow = load_workflow(args.config.resolve().parent / config["workflow"])

@@ -19,3 +19,10 @@ outputs/
 
 mcp-tools-session.md
 mcp-tools-session.txt
+# Private character profiles and generated media
+characters/
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.gif
