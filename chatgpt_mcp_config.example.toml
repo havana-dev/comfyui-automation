@@ -1,0 +1,9 @@
+[mcp_servers.comfyui-local]
+command = 'E:\Dev\comfyui-automation\.venv-mcp\Scripts\python.exe'
+args = ['-B', '-u', 'E:\Dev\comfyui-automation\mcp_server.py']
+startup_timeout_sec = 30
+tool_timeout_sec = 1200
+
+[mcp_servers.comfyui-local.env]
+PYTHONUTF8 = '1'
+PYTHONDONTWRITEBYTECODE = '1'

@@ -1,0 +1,2 @@
+# Official SDK v1 maintenance API (FastMCP); deliberately exclude v2 API changes.
+mcp>=1.28,<2

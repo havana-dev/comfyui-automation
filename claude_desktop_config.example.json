@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "comfyui-local": {
+      "command": "E:\\Dev\\comfyui-automation\\.venv-mcp\\Scripts\\python.exe",
+      "args": ["-B", "-u", "E:\\Dev\\comfyui-automation\\mcp_server.py"],
+      "env": {"PYTHONUTF8": "1", "PYTHONDONTWRITEBYTECODE": "1"}
+    }
+  }
+}

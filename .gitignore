@@ -1,0 +1,21 @@
+# Python
+.venv/
+.venv-mcp/
+__pycache__/
+*.pyc
+
+# 환경 설정 및 비밀 정보
+.env
+.env.*
+config.json
+
+# 생성 이미지 및 모델
+outputs/
+*.safetensors
+*.ckpt
+
+# 로그
+*.log
+
+mcp-tools-session.md
+mcp-tools-session.txt
