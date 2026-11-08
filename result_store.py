@@ -2,9 +2,38 @@
 import json
 import re
 import uuid
+import struct
+import zlib
 from datetime import datetime, timezone
 from ntpath import isreserved
 from pathlib import Path, PureWindowsPath
+
+
+def embed_png_metadata(path, metadata):
+    """Add a UTF-8 iTXt chunk to a newly saved result, never a reference file."""
+    target = Path(path)
+    data = target.read_bytes()
+    if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+        raise ValueError("Result is not a PNG")
+    offset = 8
+    while offset + 12 <= len(data):
+        length = struct.unpack(">I", data[offset:offset + 4])[0]
+        end = offset + 12 + length
+        if end > len(data):
+            break
+        if data[offset + 4:offset + 8] == b"IEND":
+            payload = b"character_scene\0\0\0\0\0" + json.dumps(metadata, ensure_ascii=False).encode("utf-8")
+            chunk = b"iTXt" + payload
+            chunk = struct.pack(">I", len(payload)) + chunk + struct.pack(">I", zlib.crc32(chunk) & 0xffffffff)
+            temporary = target.with_name(f".{uuid.uuid4().hex}.part")
+            try:
+                temporary.write_bytes(data[:offset] + chunk + data[offset:])
+                temporary.replace(target)
+            finally:
+                temporary.unlink(missing_ok=True)
+            return
+        offset = end
+    raise ValueError("Result PNG has no valid IEND chunk")
 
 
 def output_folder(output_dir, character=None, output_subdir=None):

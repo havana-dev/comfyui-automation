@@ -124,8 +124,16 @@ Submission and polling use the existing client and shared generation lock. Timeo
 Copy `config.example.json` to the ignored `config.json` and set your local output and backend paths.
 The example paths under `backend` are placeholders for your existing installation.
 
-The supplied FLUX.2 Klein 4B FP8 API graph is `workflows/flux2_klein_edit_api.json`.
-`config.json` connects its actual inputs:
+Editing defaults to Qwen Image 2.1, reusing the scene graph preparation and client.
+The explicit input PNG is uploaded as `images.image_1`; the edit instruction goes directly
+to `TextEncodeQwenImage21.prompt` (the actual positive prompt field). No official reference
+is substituted when an edit source is supplied. JSON records `reference_image`,
+`reference_sha256` of the uploaded bytes, prompt, seed, models and submitted graph.
+
+The preserved FLUX.2 Klein 4B FP8 API graph is `workflows/flux2_klein_edit_api.json`.
+Set `edit_engine` to `klein` in `config.json` to select it; its existing `edit_workflow`
+configuration remains available. Omitted `edit_engine` defaults to `qwen`.
+The Klein configuration connects its actual inputs:
 
 ```json
 {"path": "workflows/flux2_klein_edit_api.json",
@@ -144,3 +152,36 @@ Existing `generate_image` behavior and background backend startup remain unchang
 Codex는 이 프로젝트의 `AGENTS.md`를 작업 지침으로 사용합니다. Claude Desktop에서는
 `AGENTS.md`의 규칙이 자동 적용되지 않으므로, 같은 동작을 원하면 해당 규칙을 Claude Desktop의
 프로젝트 지침이나 대화 지침에 별도로 제공해야 합니다.
+
+### Qwen Image 2.1 캐릭터 새 장면
+
+`create_character_scene(character, scene_description, seed=None, pose_image=None)`은
+`workflows/qwen21_character_scene_api.json`을 기본으로 사용합니다. 한국어 한 문장 요청은
+Codex가 `get_character`로 이름·별칭을 조회하고 공식 이미지를 확인한 뒤, 저장된 설정과
+요청을 영어 `scene_description`으로 구성하여 호출합니다. 서버 자체 번역기는 없습니다.
+`generate_image`는 Z-Image, `edit_image`는 기본적으로 Qwen Image 2.1을 사용합니다.
+
+실제 API 연결은 `470: LoadImage.image`, `459:474: TextEncodeQwenImage21.prompt`와
+`images.image_1`, `459:458: KSampler.seed`입니다. 등록된 캐릭터 폴더의
+`reference_v1.png`를 검증하고 그 바이트를 고유 이름으로 업로드합니다.
+사용자가 지정한 `pose_image`만 `images.image_2`로 연결합니다. 이 추가 입력은 설치된
+`nodes_qwen.py`의 `images` Autogrow 스키마(`image_1`~`image_16`)에 따릅니다.
+실행 그래프에서는 템플릿의 추가 이미지와 샘플 프롬프트·프롬프트 재작성·미리보기 분기를
+제외하고 영어 프롬프트를 인코더에 직접 전달합니다. 원본 워크플로 파일은 보존합니다.
+
+결과는 캐릭터 폴더의 `scenes/<고유 실행 ID>/`에 PNG/JSON으로 저장됩니다.
+JSON에는 실제 제출 그래프의 모델 파일명, 공식 참조 절대 경로와 SHA-256,
+프롬프트, seed, 작업 유형과 엔진을 기록합니다. SHA-256은 사용한 바이트의 기록입니다.
+기존 업로드·저장 코드와 `result_store.py`를 재사용합니다.
+
+실제 생성 전에는 MCP 프로세스를 재시작하여 변경을 반영하고, 공식 참조 등록과
+Qwen 노드 및 다음 모델의 설치 상태를 확인하세요. 실행 시에도 업로드·제출 전에
+노드와 모델을 점검하며, 실패하거나 시간이 초과되어도 자동 재시도하지 않습니다.
+
+- `qwen_image_2.1_int8_convrot.safetensors`
+- `qwen3vl_8b_int8_convrot.safetensors`
+- `qwen_image_2.1_vae_bf16.safetensors`
+
+워크플로의 `resolution=0`, latent 스위치와 샘플링 설정을 유지하므로 기본 출력 크기는
+첫 공식 참조 이미지 크기를 따릅니다. 닮음과 그림체 유지 정도는 실제 생성으로 확인해야 합니다.
+모의 테스트: `.\.venv-mcp\Scripts\python.exe -B -m unittest discover -v`.

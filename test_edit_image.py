@@ -1,5 +1,6 @@
 """Mock-only edit coverage. Never connects to ComfyUI."""
 import json
+import hashlib
 import tempfile
 import unittest
 from pathlib import Path
@@ -35,6 +36,7 @@ class EditTests(unittest.TestCase):
             self.assertEqual(GRAPH['text']['inputs']['text'], 'old')
             metadata = json.loads(Path(result['metadata_file']).read_text())
             self.assertEqual(metadata['reference_image'], str(source.resolve()))
+            self.assertEqual(metadata['reference_sha256'], hashlib.sha256(PNG).hexdigest())
             self.assertEqual(metadata['operation'], 'edit_image')
             self.assertEqual(metadata['workflow'], sent)
             self.assertEqual(metadata['seed'], 42)
@@ -75,6 +77,7 @@ class EditTests(unittest.TestCase):
 
     def test_adapter_resolves_first_reference_and_releases_lock(self):
         config = {'base_url': 'http://127.0.0.1:8188', 'output_dir': 'out',
+                  'edit_engine': 'klein',
                   'edit_workflow': {'path': 'official.json', 'bindings': BINDINGS}}
         store = Mock()
         store.get.return_value = {'folder_name': 'existing-id', 'reference_images': ['reference_v1.png', 'other.png']}
@@ -82,6 +85,69 @@ class EditTests(unittest.TestCase):
             self.assertEqual(mcp_server.edit_sync(None, 'hair', 'Example', 42), {'ok': True})
             self.assertEqual(edit.call_args.args[3], 'reference_v1.png')
             self.assertEqual(edit.call_args.kwargs['character'], 'existing-id')
+        self.assertFalse(mcp_server.generation_lock.locked())
+
+    def test_default_qwen_uses_explicit_source_and_preserves_previous_results(self):
+        with tempfile.TemporaryDirectory(dir=ROOT) as folder:
+            root = Path(folder)
+            source = root / 'previous-scene.png'; source.write_bytes(PNG)
+            official = root / 'reference_v1.png'; official.write_bytes(PNG + b'official')
+            config = {'base_url': 'http://127.0.0.1:8188', 'output_dir': folder,
+                      'edit_workflow': {'path': 'legacy-klein.json', 'bindings': BINDINGS}}
+            (root / 'config.json').write_text(json.dumps(config), encoding='utf-8')
+            store = Mock()
+            store.get.return_value = {'folder_name': 'example-id', 'reference_images': [str(official)]}
+            client = ComfyClient(config['base_url'])
+            entry = {'outputs': {'461': {'images': [{'filename': 'edited.png', 'type': 'output'}]}}}
+            instruction = 'Change only the clothing to an ivory linen day dress.'
+            with patch.object(mcp_server, 'ROOT', root), patch.object(mcp_server, 'character_store', return_value=store), patch.object(mcp_server, 'ensure_backend'), patch.object(mcp_server, 'ComfyClient', return_value=client), patch.object(client, 'check'), patch.object(client, 'upload_image', return_value='uploaded-source.png') as upload, patch.object(client, 'wait', return_value=entry), patch.object(client, 'request', side_effect=[{'prompt_id': 'qwen-edit'}, PNG, {'prompt_id': 'qwen-edit'}, PNG]) as request:
+                first = mcp_server.edit_sync(str(source), instruction, 'alias', 42)
+                old_png = Path(first['files'][0]).read_bytes()
+                old_json = Path(first['metadata_file']).read_bytes()
+                second = mcp_server.edit_sync(str(source), instruction, 'alias', 42)
+            self.assertEqual(set(first), {'prompt_id', 'seed', 'files', 'metadata_file', 'character', 'reference_image'})
+            self.assertEqual(first['reference_image'], str(source.resolve()))
+            self.assertNotEqual(first['files'], second['files'])
+            self.assertNotEqual(first['metadata_file'], second['metadata_file'])
+            self.assertEqual(Path(first['files'][0]).read_bytes(), old_png)
+            self.assertEqual(Path(first['metadata_file']).read_bytes(), old_json)
+            self.assertEqual(source.read_bytes(), PNG)
+            self.assertEqual(official.read_bytes(), PNG + b'official')
+            self.assertEqual(upload.call_count, 2)
+            for call in upload.call_args_list:
+                self.assertEqual(call.args[0], source.resolve())
+                self.assertEqual(call.kwargs['image_bytes'], PNG)
+            submitted = [call.args[1]['prompt'] for call in request.call_args_list if call.args[0] == '/prompt']
+            self.assertEqual(len(submitted), 2)
+            graph = submitted[0]
+            self.assertEqual(graph['470']['inputs']['image'], 'uploaded-source.png')
+            self.assertEqual(graph['459:474']['inputs']['images.image_1'], ['470', 0])
+            self.assertEqual(graph['459:474']['inputs']['prompt'], instruction)
+            self.assertEqual(graph['459:458']['inputs']['positive'], ['459:474', 0])
+            self.assertNotIn('images.image_2', graph['459:474']['inputs'])
+            self.assertNotIn('459:500', graph)
+            metadata = json.loads(old_json)
+            self.assertEqual(metadata['engine'], 'Qwen Image 2.1')
+            self.assertEqual(metadata['operation'], 'edit_image')
+            self.assertEqual(metadata['reference_image'], str(source.resolve()))
+            self.assertEqual(metadata['reference_sha256'], hashlib.sha256(PNG).hexdigest())
+            self.assertEqual(metadata['prompt'], instruction)
+            self.assertEqual(metadata['seed'], 42)
+            self.assertEqual(metadata['workflow'], graph)
+            self.assertEqual({m['filename'] for m in metadata['models']}, {
+                'qwen_image_2.1_int8_convrot.safetensors',
+                'qwen3vl_8b_int8_convrot.safetensors',
+                'qwen_image_2.1_vae_bf16.safetensors'})
+        self.assertFalse(mcp_server.generation_lock.locked())
+
+    def test_default_qwen_retains_omitted_reference_fallback(self):
+        config = {'base_url': 'http://127.0.0.1:8188', 'output_dir': 'out'}
+        store = Mock()
+        store.get.return_value = {'folder_name': 'example-id', 'reference_images': ['fallback.png']}
+        with patch.object(mcp_server.Path, 'read_text', return_value=json.dumps(config)), patch.object(mcp_server, 'prepare_qwen_graph', return_value={'461': {'inputs': {}}}), patch.object(mcp_server, 'character_store', return_value=store), patch.object(mcp_server, 'ensure_backend'), patch.object(mcp_server, 'edit_local_image', return_value={'ok': True}) as edit:
+            self.assertEqual(mcp_server.edit_sync(None, 'Change clothes', 'alias', 42), {'ok': True})
+            self.assertEqual(edit.call_args.args[3], 'fallback.png')
+            self.assertEqual(edit.call_args.args[2], mcp_server.QWEN_BINDINGS)
         self.assertFalse(mcp_server.generation_lock.locked())
 
     def test_missing_workflow_fails_without_startup(self):

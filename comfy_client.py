@@ -1,5 +1,6 @@
 """Local ComfyUI client. Standard library only; never installs models."""
 import argparse
+import hashlib
 import json
 import secrets
 import sys
@@ -40,13 +41,13 @@ class ComfyClient:
             raise ComfyError(f"API 연결 실패 ({self.base_url}): {exc}. Desktop 실행 상태/포트/실행 환경의 접근 권한을 확인하세요.") from exc
         return body if binary else json.loads(body)
 
-    def upload_image(self, path):
+    def upload_image(self, path, *, image_bytes=None):
         """Upload a uniquely named copy; never overwrite the input image."""
         boundary = uuid.uuid4().hex
         filename = f"edit_reference_{uuid.uuid4().hex}.png"
         body = (f'--{boundary}\r\nContent-Disposition: form-data; name="image"; '
                 f'filename="{filename}"\r\nContent-Type: image/png\r\n\r\n').encode()
-        body += Path(path).read_bytes() + f"\r\n--{boundary}--\r\n".encode()
+        body += (Path(path).read_bytes() if image_bytes is None else image_bytes) + f"\r\n--{boundary}--\r\n".encode()
         req = Request(self.base_url + "/upload/image", data=body,
                       headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
         try:
@@ -179,12 +180,16 @@ def generate_image(client, workflow, prompt, output_dir, timeout=900, seed=None,
 
 
 def edit_image(client, workflow, bindings, reference_image, instruction, output_dir,
-               timeout=900, seed=None, *, character=None):
-    """Run a configured official Klein API graph once, with no retries."""
+               timeout=900, seed=None, *, character=None, reference_bytes=None,
+               additional_references=None, metadata_extra=None, operation="edit_image"):
+    """Run a configured reference-image API graph once, with no retries."""
     if not instruction.strip():
         raise ComfyError("Edit instruction is required.")
     reference = Path(reference_image).resolve()
-    if not reference.is_file() or not reference.read_bytes().startswith(b"\x89PNG\r\n\x1a\n"):
+    if not reference.is_file():
+        raise ComfyError(f"Reference PNG missing or invalid: {reference}")
+    reference_bytes = reference.read_bytes() if reference_bytes is None else reference_bytes
+    if not reference_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
         raise ComfyError(f"Reference PNG missing or invalid: {reference}")
     seed = secrets.randbelow(2**63) if seed is None else seed
     if not isinstance(seed, int) or not 0 <= seed < 2**64:
@@ -206,9 +211,14 @@ def edit_image(client, workflow, bindings, reference_image, instruction, output_
     # The unique upload does not exist in LoadImage's enum until uploaded.
     preflight = json.loads(json.dumps(graph))
     del preflight[image_node]["inputs"][image_field]
+    for node_id in additional_references or {}:
+        del preflight[node_id]["inputs"]["image"]
     client.check(preflight)
-    folder = prepare_output(character_folder(output_dir, character) / "edits" / uuid.uuid4().hex)
-    graph[image_node]["inputs"][image_field] = client.upload_image(reference)
+    category = "scenes" if operation == "create_character_scene" else "edits"
+    folder = prepare_output(character_folder(output_dir, character) / category / uuid.uuid4().hex)
+    graph[image_node]["inputs"][image_field] = client.upload_image(reference, image_bytes=reference_bytes)
+    for node_id, (path, data) in (additional_references or {}).items():
+        graph[node_id]["inputs"]["image"] = client.upload_image(path, image_bytes=data)
     response = client.request("/prompt", {"prompt": graph, "client_id": str(uuid.uuid4())})
     if response.get("node_errors") or not response.get("prompt_id"):
         raise ComfyError(f"Edit submission failed: {response}")
@@ -216,11 +226,19 @@ def edit_image(client, workflow, bindings, reference_image, instruction, output_
     entry = client.wait(prompt_id, timeout)
     files = client.save(prompt_id, entry, folder)
     try:
+        extra = {**(metadata_extra or {}), "operation": operation,
+                 "reference_image": str(reference),
+                 "reference_sha256": hashlib.sha256(reference_bytes).hexdigest()}
+        if operation == "create_character_scene":
+            from result_store import embed_png_metadata
+            for file in files:
+                embed_png_metadata(file, {**extra, "prompt": instruction, "seed": seed,
+                                          "prompt_id": prompt_id})
         metadata = save_metadata(folder, prompt_id, graph, files, character, entry,
                                  datetime.now(timezone.utc).isoformat(),
                                  prompt=instruction, seed=seed,
-                                 extra={"operation": "edit_image", "reference_image": str(reference)})
-    except OSError as exc:
+                                 extra=extra)
+    except (OSError, ValueError) as exc:
         raise ComfyError(f"Images saved but edit metadata failed: prompt_id={prompt_id}, files={files}: {exc}") from exc
     return {"prompt_id": prompt_id, "seed": seed, "files": files,
             "metadata_file": metadata, "character": character, "reference_image": str(reference)}

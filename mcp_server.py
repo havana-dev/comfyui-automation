@@ -19,6 +19,7 @@ from character_store import CharacterStore
 from comfy_client import ComfyClient, ComfyError, ROOT, load_workflow
 from comfy_client import generate_image as generate_local_image
 from comfy_client import edit_image as edit_local_image
+from character_scene import prepare_scene, create_scene, prepare_qwen_graph, BINDINGS as QWEN_BINDINGS
 
 logger = logging.getLogger(__name__)
 generation_lock = threading.Lock()
@@ -82,9 +83,10 @@ mcp = FastMCP(
     instructions=(
         "Use comfyui_status to check the local ComfyUI server. "
         "Only generate an image when the user requests one. "
+        "For a new scene of a registered character, call get_character, translate the user's scene and known profile facts into an English scene_description, and use create_character_scene. It validates the official reference_v1.png; never use a previous output for an independent scene. Do not require the user to write English. Identity/style preservation is best effort. "
         "generate_image saves PNG and JSON files on this Windows PC and returns paths. "
         "It can take several minutes. On timeout, do not automatically resubmit: "
-        "the ComfyUI job may still be running. For named characters, call get_character first. If missing, call save_character with only user-provided facts; never invent permanent appearance, age, era or style. Translate the Korean request and known profile facts into an English prompt yourself, honoring current outfit/style requests without overwriting the profile. Then call generate_image with that prompt and the profile folder_name as character. Unknown facts stay unspecified. For requested edits, use edit_image with the registered reference_images[0]; generate_image does not use references. Registered names, aliases, IDs and folder names resolve to the same character folder. Unknown names remain folder labels. Character is not a prompt addition."
+        "the ComfyUI job may still be running. For named characters, call get_character first. If missing, call save_character with only user-provided facts; never invent permanent appearance, age, era or style. Translate the Korean request and known profile facts into an English prompt yourself, honoring current outfit/style requests without overwriting the profile. For text-only generation without official character reference conditioning, call generate_image with that prompt and the profile folder_name as character. Unknown facts stay unspecified. For requested edits, use edit_image with the intended edit source; generate_image does not use references. Registered names, aliases, IDs and folder names resolve to the same character folder. Unknown names remain folder labels. Character is not a prompt addition."
     ),
 )
 
@@ -142,14 +144,22 @@ def edit_sync(reference_image, instruction, character, seed):
             if not references:
                 raise ComfyError("No registered reference image; provide reference_image or a character with reference_images[0].")
             reference_image = references[0]
-        settings = config.get("edit_workflow", {})
-        path = ROOT / settings.get("path", "workflows/flux2_klein_4b_fp8_edit_api.json")
-        if not path.is_file():
-            raise ComfyError(f"FLUX.2 Klein 4B FP8 edit workflow not ready: {path}. Nothing will be downloaded or generated.")
-        workflow = load_workflow(path)
-        bindings = settings.get("bindings", {})
-        if not all(key in bindings for key in ("reference_image", "instruction", "seed")):
-            raise ComfyError("Edit workflow bindings missing: reference_image, instruction, seed are required.")
+        engine = config.get("edit_engine", "qwen")
+        if engine == "qwen":
+            workflow = prepare_qwen_graph()
+            workflow["461"]["inputs"]["filename_prefix"] = "Qwen_edit"
+            bindings = QWEN_BINDINGS
+        elif engine == "klein":
+            settings = config.get("edit_workflow", {})
+            path = ROOT / settings.get("path", "workflows/flux2_klein_4b_fp8_edit_api.json")
+            if not path.is_file():
+                raise ComfyError(f"FLUX.2 Klein 4B FP8 edit workflow not ready: {path}. Nothing will be downloaded or generated.")
+            workflow = load_workflow(path)
+            bindings = settings.get("bindings", {})
+            if not all(key in bindings for key in ("reference_image", "instruction", "seed")):
+                raise ComfyError("Edit workflow bindings missing: reference_image, instruction, seed are required.")
+        else:
+            raise ComfyError("edit_engine must be qwen or klein")
         timeout = float(config.get("timeout_seconds", 900))
         if not 0 < timeout < float("inf"):
             raise ComfyError("timeout_seconds must be finite and positive")
@@ -157,7 +167,8 @@ def edit_sync(reference_image, instruction, character, seed):
         ensure_backend(client)
         return edit_local_image(client, workflow, bindings, reference_image, instruction,
                                 config["output_dir"], timeout, seed,
-                                character=profile["folder_name"] if profile else character)
+                                character=profile["folder_name"] if profile else character,
+                                metadata_extra={"engine": "Qwen Image 2.1" if engine == "qwen" else "FLUX.2 Klein"})
     finally:
         generation_lock.release()
 
@@ -165,11 +176,47 @@ def edit_sync(reference_image, instruction, character, seed):
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False))
 async def edit_image(reference_image: str | None = None, instruction: str = "",
                      character: str | None = None, seed: int | None = None) -> dict:
-    """Edit one reference PNG using configured FLUX.2 Klein 4B FP8 API workflow.
-    If reference_image is omitted, use character.reference_images[0]. Preserve originals.
+    """Edit one specified PNG using Qwen Image 2.1 by default (Klein is configurable).
+    Explicit reference_image is the edit source, not necessarily the official reference.
+    Only if omitted, use character.reference_images[0]. Preserve originals.
     Returns separate PNG and JSON paths. Never automatically retry after timeout.
     """
     return await run_tool(edit_sync, reference_image, instruction, character, seed)
+
+
+def create_character_scene_sync(character, scene_description, seed, pose_image):
+    if not generation_lock.acquire(blocking=False):
+        raise ComfyError("This MCP process is already generating an image. Wait for it to finish.")
+    try:
+        config = json.loads((ROOT / "config.json").read_text(encoding="utf-8-sig"))
+        profile = character_store().get(character)
+        if profile is None:
+            raise ComfyError(f"Registered character not found: {character}")
+        timeout = float(config.get("timeout_seconds", 900))
+        if not 0 < timeout < float("inf"):
+            raise ComfyError("timeout_seconds must be finite and positive")
+        if seed is not None and (not isinstance(seed, int) or not 0 <= seed < 2**64):
+            raise ComfyError("seed must be an integer in [0, 2**64).")
+        prepared = prepare_scene(profile, config["output_dir"], scene_description, pose_image)
+        client = ComfyClient(config["base_url"])
+        ensure_backend(client)
+        return create_scene(client, prepared, config["output_dir"], timeout, seed, profile["folder_name"])
+    finally:
+        generation_lock.release()
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False))
+async def create_character_scene(character: str, scene_description: str,
+                                 seed: int | None = None, pose_image: str | None = None) -> dict:
+    """Create one Qwen Image 2.1 scene from a registered character's official reference_v1.png.
+    character accepts a registered name, alias or ID. The calling assistant must first
+    get_character and compose scene_description in English from the Korean request plus
+    saved appearance, accessories, era and style; the user need not provide English.
+    This tool has no internal translator. pose_image is an optional PNG used only for pose.
+    No previous output is selected. Returns PNG/JSON paths; both contain reference provenance.
+    Best-effort likeness/style, not an identity lock. Never automatically retry.
+    """
+    return await run_tool(create_character_scene_sync, character, scene_description, seed, pose_image)
 
 
 async def run_tool(function, *args):

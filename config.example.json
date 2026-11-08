@@ -9,6 +9,7 @@
     "input_dir": "C:/path/to/ComfyUI-Shared/input",
     "output_dir": "C:/path/to/ComfyUI-Shared/output"
   },
+  "edit_engine": "qwen",
   "edit_workflow": {
     "path": "workflows/flux2_klein_edit_api.json",
     "bindings": {
