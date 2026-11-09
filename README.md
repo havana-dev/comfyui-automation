@@ -1,5 +1,9 @@
 # ComfyUI 이미지 자동화 — Qwen Image 2.1
 
+Windows ZIP 배포의 간편 설치는 **[MCP_SETUP.md의 간편 설치 v1](MCP_SETUP.md#간편-설치-v1-windows-zip)**을 참고하세요.
+압축을 푼 폴더에서 `powershell -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1`을 실행하면
+Claude Desktop / Claude Code / 둘 다를 선택할 수 있습니다. Python 3.13과 실행 중인 로컬 ComfyUI가 필요합니다.
+
 Python 표준 라이브러리로 로컬 ComfyUI API를 호출합니다. pip 설치가 필요 없으며 ComfyUI 설치/모델/원본 소스를 변경하지 않습니다.
 
 일반 생성과 신규 캐릭터 초안은 Qwen Image 2.1 T2I, 편집과 캐릭터 장면은 Qwen Image 2.1 참조 이미지 그래프를 사용합니다.

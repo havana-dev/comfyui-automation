@@ -1,5 +1,109 @@
 # ComfyUI STDIO MCP 설정
 
+## 간편 설치 v1 (Windows ZIP)
+
+### 준비와 실행
+
+1. GitHub ZIP을 **모두 압축 해제**하고 계속 사용할 쓰기 가능한 폴더에 둡니다. Git은 필요 없습니다.
+2. [Python 3.13](https://www.python.org/downloads/windows/)을 설치합니다. 설치기의 기본 Python Launcher도 함께 설치하면 자동 탐색이 쉽습니다.
+3. Claude Desktop은 설치 후 한 번 실행합니다. Claude Code를 선택한다면 [Windows 네이티브 Claude Code](https://code.claude.com/docs/en/setup)를 설치하고 `claude` 명령을 사용할 수 있어야 합니다. npm의 `.cmd` 실행기는 v1에서 자동 등록하지 않습니다.
+4. [ComfyUI Desktop](https://docs.comfy.org/installation/desktop/windows)에서 로컬 인스턴스를 실행하고 설치 폴더와 API 주소/포트를 확인합니다. MCP에 PyTorch·CUDA를 설치할 필요는 없습니다.
+5. 압축을 푼 프로젝트 폴더에서 PowerShell을 열고 다음 **한 명령**을 실행합니다.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1
+```
+
+실행 정책은 이 PowerShell 프로세스에만 적용하며 시스템 정책·PATH·Git 설정은 변경하지 않습니다.
+조직 정책으로 실행이 금지되어 있다면 관리자에게 문의하세요. Python 자동 탐색이 실패하면
+`setup.ps1 -PythonPath 'C:\실제경로\python.exe'`로 3.13 실행 파일을 지정할 수 있습니다.
+
+설치하지 않고 기존 환경만 읽기 전용으로 진단하려면 다음 명령을 사용합니다.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1 -CheckOnly
+```
+
+`-CheckOnly`는 파일·폴더 생성, 설정/백업 저장, 패키지 설치, Claude 등록을 수행하지 않습니다.
+기존 `.venv-mcp`에서 MCP initialize / tools/list와 ComfyUI GET 진단만 실행합니다.
+설정이나 가상환경이 없으면 미확인/실패로 표시하며 자동으로 만들지 않습니다.
+읽기 전용 모드에서는 Python Launcher도 호출하지 않습니다. Python을 찾지 못하면 `-PythonPath`로 기존 3.13 실행 파일을 지정하세요.
+출력 JSON의 `mcp_connected`(STDIO 연결), `connected`(ComfyUI API), `models_ready`(Qwen 모델·노드)를
+각각 확인하세요. Claude 앱 자체의 연결 확인은 별도입니다.
+읽기 전용 진단의 종료 코드는 **0: 모든 필수 진단 통과, 1: 필수 진단 실패 또는 미확인**입니다.
+Python 직접 호출은 `.\.venv-mcp\Scripts\python.exe -B setup_windows.py --diagnose`입니다.
+
+PowerShell은 `-PythonPath`, `-CheckOnly`, `-Help`/`--help`(`-h`, `-?`)를 지원하고,
+Python 보조 파일은 `--diagnose`, `--help`/`-h`를 지원합니다.
+도움말은 설치 없이 종료하며, 미지원 옵션·위치 인자는 설치 전에 사용법과 함께 거부합니다(종료 코드 2).
+
+### 설치기가 하는 일과 보존 규칙
+
+- 한국어로 Desktop / Code / 둘 다를 선택합니다. 새 `.venv-mcp`만 필요할 때 생성하고,
+  MCP 패키지가 없을 때 해당 가상환경에 `requirements-mcp.txt`를 설치합니다.
+  기존 호환 환경은 재사용합니다. 불완전하거나 호환되지 않는 환경은 교체·삭제·자동 업그레이드하지 않습니다.
+- `config.json`이 없을 때만 예제를 바탕으로 ComfyUI 폴더·API 주소·출력 폴더를 확인받아 만듭니다.
+  결과 경로는 절대 경로로 저장합니다. 기존 `config.json`은 바이트 단위로 보존합니다.
+- `check_mcp_tools.py`로 initialize / tools/list를 확인합니다. tools/call과 이미지 생성은 하지 않습니다.
+- Desktop은 `%APPDATA%\Claude\claude_desktop_config.json`의 다른 MCP·기타 설정을 보존하여 병합합니다.
+  기존 파일은 같은 폴더의 `파일명.backup-고유ID.bak`로 원본 전체를 백업합니다.
+- Code는 공식 `claude mcp add --transport stdio --scope ...`를 사용합니다.
+  기본 `local`은 이 프로젝트만, 선택 `user`는 모든 프로젝트에 적용됩니다. 변경 전
+  `%USERPROFILE%\.claude.json`을 같은 방식으로 백업합니다. 사용자 지정 `CLAUDE_CONFIG_DIR`은 v1 자동 등록 대상이 아닙니다.
+- 동일 설정으로 재실행하면 등록 파일과 백업을 추가 변경하지 않습니다. 같은 이름이 다른 경로·환경을 가리키면
+  덮어쓰지 않고 해당 앱 등록만 실패로 표시합니다. JSON 형식 오류도 원본을 보존한 채 중단합니다.
+  CLI 실패 시 백업 경로를 표시하며, 동시에 발생한 다른 변경을 덮어쓸 수 있는 자동 복원은 하지 않습니다.
+- 새 등록 항목에 `COMFYUI_MCP_AUTO_START=0`을 지정하여 **이미 실행 중인 로컬 API에만 연결**합니다.
+  기존 config와 다른 클라이언트의 8188 자동 시작은 그대로 유지됩니다.
+  수동 설정의 `backend.auto_start=false`도 지원하며, 옵션/환경변수가 없으면 기존 자동 시작이 기본입니다.
+  환경변수는 `0` / `1`만 지원하고 config보다 우선합니다.
+- ComfyUI 진단은 GET `/system_stats`, `/object_info`만 사용합니다. 백엔드 실행·모델 설치·업로드·이미지 생성은 하지 않습니다.
+  출력 폴더의 실제 쓰기 권한과 GPU 생성 성공은 이 진단으로 검증하지 않습니다.
+
+필수 모델은 선택한 인스턴스가 사용하는 모델 루트의 다음 위치에 둡니다. 공유 모델 폴더를 쓰면 그 폴더를 기준으로 합니다.
+자동 다운로드, 기존 파일 이동·교체, 모델 YAML 수정은 하지 않습니다.
+
+| 하위 폴더 | 필수 파일 |
+|---|---|
+| `diffusion_models` | `qwen_image_2.1_int8_convrot.safetensors` |
+| `text_encoders` | `qwen3vl_8b_int8_convrot.safetensors` |
+| `vae` | `qwen_image_2.1_vae_bf16.safetensors` |
+
+[공식 모델 다운로드 안내](https://docs.comfy.org/tutorials/image/qwen/qwen-image-2-1)를 참고하세요.
+실제로 사용하는 T2I·편집 그래프의 노드와 모델 선택 목록을 검사하므로 비활성 프롬프트 확장 모델은 요구하지 않습니다.
+필수 노드 누락 시 ComfyUI 버전과 시작 로그의 로딩 실패를 확인하세요. 설치기가 업데이트하지는 않습니다.
+
+결과는 **앱별 MCP 등록 / ComfyUI 연결 / Qwen 모델·노드 준비**로 나눠 표시합니다.
+등록 완료는 앱에서 실제 연결까지 확인했다는 뜻이 아닙니다. Desktop을 완전히 종료 후 재시작하고,
+Code는 이 프로젝트에서 시작하여 `/mcp`로 확인하세요. 서버가 꺼져 있으면 모델 준비는 미확인입니다.
+일반 설치의 종료 코드는 `0` 등록·진단 완료, `1` 설치/등록 실패, `2` 등록 완료 후 ComfyUI/Qwen 준비 미완료입니다.
+프로젝트 폴더를 옮기면 절대 경로 등록이 달라지므로 기존 항목의 경로를 직접 확인해야 합니다.
+백업에는 기존 설정의 비밀값도 포함될 수 있으므로 개인 PC에 보관하고 공유하지 마세요.
+
+### AGENTS.md와 Claude 지침
+
+Codex는 프로젝트의 `AGENTS.md`를 지침으로 읽습니다. Claude Code도 지원 버전과 설정에 따라 직접 읽지만,
+v1은 호환성을 위해 Code 등록 후 **없는 경우에만** `CLAUDE.md`를 만들고 `@AGENTS.md`를 넣습니다.
+기존 `CLAUDE.md`는 수정하지 않으며 연결이 필요하면 사용자가 직접 한 줄 추가하도록 안내합니다.
+`user` scope로 MCP를 등록해도 이 프로젝트 지침이 다른 모든 프로젝트에 자동 적용되지는 않습니다.
+
+일반 Claude Desktop 채팅에는 로컬 `AGENTS.md`가 자동 적용되지 않습니다.
+동일 규칙을 원하면 내용을 프로젝트 지침에 복사하거나 대화에 첨부하세요. 짧게 시작하려면 다음 지침을 사용합니다.
+
+> 이미지를 요청했을 때만 comfyui-local을 사용한다. 한국어 요청은 AI가 영어 프롬프트로 구성한다.
+> 캐릭터 이름은 먼저 get_character로 조회한다. 신규 캐릭터는 create_character_draft,
+> 등록 캐릭터의 새 장면은 create_character_scene, 부분 수정은 edit_image를 사용한다.
+> 사용자 승인·등록 요청 전에는 save_character로 저장하거나 공식 이미지를 변경하지 않는다.
+> 사용자가 다른 화풍을 지정하지 않으면 delicate semi-realistic 2D anime illustration,
+> intricate refined linework, natural facial proportions, soft coloring을 사용한다.
+> 신규 초안은 별도 구도 요청이 없으면 허리 위 프로필로 요청한다.
+> 생성은 요청당 한 번만 수행하며 시간 초과 후 자동 재시도하지 않는다. 결과 PNG·JSON 경로를 알려준다.
+
+MCP는 현재 이미지 경로를 반환하므로 Desktop이 로컬 PNG를 자동으로 볼 수 있다고 가정하지 마세요.
+
+구현 검증은 `test_setup_windows.py`에서 임시 프로젝트·설정·모의 CLI/API만 사용합니다.
+실제 사용자 Claude 설정에 등록하거나 패키지·모델을 다운로드하는 테스트는 하지 않습니다.
+
 ## 구현 범위
 
 기존 클라이언트와 저장 함수를 재사용하는 Qwen Image 2.1 전용 STDIO 서버입니다.

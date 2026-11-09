@@ -3,6 +3,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import sys
 import threading
 import socket
@@ -30,12 +31,24 @@ backend_process = None
 
 
 def backend_settings():
-    return json.loads((ROOT / "config.json").read_text(encoding="utf-8-sig"))["backend"]
+    return json.loads((ROOT / "config.json").read_text(encoding="utf-8-sig")).get("backend", {})
 
 
 def ensure_backend(client, timeout=180):
     """Start only on connection refusal; never replace an existing listener."""
     global backend_process
+    override = os.environ.get("COMFYUI_MCP_AUTO_START")
+    if override not in (None, "0", "1"):
+        raise ComfyError("COMFYUI_MCP_AUTO_START는 0 또는 1이어야 합니다.")
+    settings = backend_settings() if override is None else {}
+    auto_start = settings.get("auto_start", True) if override is None else override == "1"
+    if not isinstance(auto_start, bool):
+        raise ComfyError("backend.auto_start는 true 또는 false여야 합니다.")
+    if not auto_start:
+        stats = client.request("/system_stats")
+        if not isinstance(stats, dict) or "system" not in stats or "devices" not in stats:
+            raise ComfyError("ComfyUI API 응답이 아닙니다. Desktop의 로컬 API 주소를 확인하세요.")
+        return
     address = urlsplit(client.base_url)
     if address.port != 8188:
         raise ComfyError("Automatic startup requires local port 8188.")
