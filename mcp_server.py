@@ -1,5 +1,6 @@
 """STDIO MCP adapter. Start with the project's .venv-mcp Python."""
 import asyncio
+import hashlib
 import json
 import logging
 import sys
@@ -17,10 +18,10 @@ from mcp.types import ToolAnnotations
 from character_store import CharacterStore
 from character_draft import prepare_draft, create_draft
 
-from comfy_client import ComfyClient, ComfyError, ROOT, load_workflow
+from comfy_client import ComfyClient, ComfyError, ROOT, prepare_generation_workflow
 from comfy_client import generate_image as generate_local_image
 from comfy_client import edit_image as edit_local_image
-from character_scene import prepare_scene, create_scene, prepare_qwen_graph, BINDINGS as QWEN_BINDINGS
+from character_scene import prepare_scene, create_scene, prepare_qwen_graph, read_reference, BINDINGS as QWEN_BINDINGS
 
 logger = logging.getLogger(__name__)
 generation_lock = threading.Lock()
@@ -97,7 +98,7 @@ def load_settings():
     timeout = float(config.get("timeout_seconds", 900))
     if not 0 < timeout < float("inf"):
         raise ValueError("timeout_seconds must be a finite positive number")
-    workflow = load_workflow(ROOT / config["workflow"])
+    workflow = prepare_generation_workflow()
     return config, workflow, timeout
 
 
@@ -134,7 +135,7 @@ def generate_sync(prompt, character, seed):
         generation_lock.release()
 
 
-def edit_sync(reference_image, instruction, character, seed):
+def edit_sync(reference_image, instruction, character, seed, style_reference_image=None):
     if not generation_lock.acquire(blocking=False):
         raise ComfyError("This MCP process is already generating an image. Wait for it to finish.")
     try:
@@ -145,22 +146,32 @@ def edit_sync(reference_image, instruction, character, seed):
             if not references:
                 raise ComfyError("No registered reference image; provide reference_image or a character with reference_images[0].")
             reference_image = references[0]
-        engine = config.get("edit_engine", "qwen")
-        if engine == "qwen":
-            workflow = prepare_qwen_graph()
-            workflow["461"]["inputs"]["filename_prefix"] = "Qwen_edit"
-            bindings = QWEN_BINDINGS
-        elif engine == "klein":
-            settings = config.get("edit_workflow", {})
-            path = ROOT / settings.get("path", "workflows/flux2_klein_4b_fp8_edit_api.json")
-            if not path.is_file():
-                raise ComfyError(f"FLUX.2 Klein 4B FP8 edit workflow not ready: {path}. Nothing will be downloaded or generated.")
-            workflow = load_workflow(path)
-            bindings = settings.get("bindings", {})
-            if not all(key in bindings for key in ("reference_image", "instruction", "seed")):
-                raise ComfyError("Edit workflow bindings missing: reference_image, instruction, seed are required.")
-        else:
-            raise ComfyError("edit_engine must be qwen or klein")
+        # Legacy edit_engine/edit_workflow settings are accepted but no longer select engines.
+        workflow = prepare_qwen_graph()
+        workflow["461"]["inputs"]["filename_prefix"] = "Qwen_edit"
+        bindings = QWEN_BINDINGS
+        metadata = {"engine": "Qwen Image 2.1"}
+        additional_references = None
+        if style_reference_image is not None:
+            if not instruction.strip():
+                raise ComfyError("Edit instruction is required.")
+            style_path, style_bytes = read_reference(style_reference_image)
+            workflow["edit:style"] = {"class_type": "LoadImage", "inputs": {"image": ""}}
+            workflow["459:474"]["inputs"]["images.image_2"] = ["edit:style", 0]
+            additional_references = {"edit:style": (style_path, style_bytes)}
+            metadata.update(style_reference_image=str(style_path),
+                            style_reference_sha256=hashlib.sha256(style_bytes).hexdigest(),
+                            edit_instruction=instruction)
+            instruction = (
+                "Edit image_1 using the following instruction: " + instruction + "\n"
+                "Reference roles: image_1 is the editing target and sole source of character identity. "
+                "Preserve image_1's facial features, skin tone, hair color, hairstyle, body, clothing "
+                "and accessories except for changes explicitly requested above. "
+                "Use image_2 ONLY as an illustration style reference: transfer its delicate linework, "
+                "coloring technique, fine shading and detailed semi-realistic anime rendering. "
+                "Do not copy the person, face, hair color, hairstyle, clothing, jewelry, hair ornaments, "
+                "objects or composition from image_2. Keep image_1's composition and background "
+                "unless explicitly asked to change them. Apply the style to image_1, not the reverse.")
         timeout = float(config.get("timeout_seconds", 900))
         if not 0 < timeout < float("inf"):
             raise ComfyError("timeout_seconds must be finite and positive")
@@ -169,20 +180,25 @@ def edit_sync(reference_image, instruction, character, seed):
         return edit_local_image(client, workflow, bindings, reference_image, instruction,
                                 config["output_dir"], timeout, seed,
                                 character=profile["folder_name"] if profile else character,
-                                metadata_extra={"engine": "Qwen Image 2.1" if engine == "qwen" else "FLUX.2 Klein"})
+                                additional_references=additional_references,
+                                metadata_extra=metadata)
     finally:
         generation_lock.release()
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False))
 async def edit_image(reference_image: str | None = None, instruction: str = "",
-                     character: str | None = None, seed: int | None = None) -> dict:
-    """Edit one specified PNG using Qwen Image 2.1 by default (Klein is configurable).
+                     character: str | None = None, seed: int | None = None,
+                     style_reference_image: str | None = None) -> dict:
+    """Edit one specified PNG using Qwen Image 2.1.
     Explicit reference_image is the edit source, not necessarily the official reference.
     Only if omitted, use character.reference_images[0]. Preserve originals.
+    Optional style_reference_image (Qwen only) supplies image_2 for linework, coloring
+    and detailed semi-realistic anime style only, never its character identity or outfit.
+    Choose it only when explicitly requested; no style reference is selected automatically.
     Returns separate PNG and JSON paths. Never automatically retry after timeout.
     """
-    return await run_tool(edit_sync, reference_image, instruction, character, seed)
+    return await run_tool(edit_sync, reference_image, instruction, character, seed, style_reference_image)
 
 
 def create_character_draft_sync(character_settings, prompt, seed):
@@ -207,6 +223,8 @@ async def create_character_draft(character_settings: dict, prompt: str, seed: in
     character_settings contains only user-provided facts (e.g. name, appearance, age,
     era, outfit, accessories, style). The calling assistant composes prompt in English
     from those facts and the Korean request; never require English from the user.
+    Include the default delicate semi-realistic 2D anime TRPG style unless the user
+    requests another style; explicit style instructions override the shared default.
     Saves PNG/JSON under drafts/<temporary ID>, with pending_approval status.
     Does not register a character or reference_v1.png. Explicit user approval is
     required before a separate registration action. Never automatically retry.
@@ -242,6 +260,8 @@ async def create_character_scene(character: str, scene_description: str,
     character accepts a registered name, alias or ID. The calling assistant must first
     get_character and compose scene_description in English from the Korean request plus
     saved appearance, accessories, era and style; the user need not provide English.
+    Include the default delicate semi-realistic 2D anime TRPG style unless the user
+    requests another style; explicit style instructions override reference style.
     This tool has no internal translator. pose_image is an optional PNG used only for pose.
     No previous output is selected. Returns PNG/JSON paths; both contain reference provenance.
     Best-effort likeness/style, not an identity lock. Never automatically retry.
@@ -266,7 +286,7 @@ async def comfyui_status() -> dict:
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False))
 async def generate_image(prompt: str, character: str | None = None, seed: int | None = None) -> dict:
-    """Generate one 1024x1024 Z-Image-Turbo image on the local PC. prompt is passed unchanged. character is an optional registered name, alias, ID or Windows folder name; seed is optional (random if omitted). Returns prompt_id, seed, files (PNG paths), metadata_file (JSON path), character. Can take up to 15 minutes; do not automatically retry after timeout."""
+    """Generate one 1024x1024 Qwen Image 2.1 T2I image on the local PC. prompt is passed unchanged. character is an optional registered name, alias, ID or Windows folder name; seed is optional (random if omitted). Returns prompt_id, seed, files (PNG paths), metadata_file (JSON path), character. Can take up to 15 minutes; do not automatically retry after timeout."""
     return await run_tool(generate_sync, prompt, character, seed)
 
 

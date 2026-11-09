@@ -8,6 +8,7 @@ from unittest.mock import Mock, patch
 
 import mcp_server
 from character_draft import prepare_draft, create_draft
+from trpg_style import apply_trpg_style, TRPG_STYLE_PRESET
 from comfy_client import ComfyClient, ComfyError, ROOT, load_workflow
 
 
@@ -26,7 +27,7 @@ class DraftTests(unittest.TestCase):
         path = ROOT / 'workflows/qwen21_text_to_image_api.json'
         original = path.read_bytes()
         graph, settings, prompt, seed = self.prepared()
-        self.assertEqual(graph['459:452']['inputs']['prompt'], self.prompt)
+        self.assertEqual(graph['459:452']['inputs']['prompt'], apply_trpg_style(self.prompt))
         self.assertEqual(graph['459:452']['inputs']['negative_prompt'], '')
         self.assertEqual(graph['459:458']['inputs']['seed'], 42)
         self.assertEqual(graph['459:456']['inputs']['batch_size'], 1)
@@ -36,6 +37,31 @@ class DraftTests(unittest.TestCase):
         self.assertEqual(path.read_bytes(), original)
         self.assertEqual(settings, self.settings)
         self.assertIsNot(settings, self.settings)
+
+    def test_sparse_draft_submits_shared_style_without_changing_settings(self):
+        settings = {'purpose': 'TRPG character'}
+        graph, saved, prompt, _ = prepare_draft(settings, 'An unnamed character', 42)
+        self.assertEqual(saved, settings)
+        self.assertIn(TRPG_STYLE_PRESET, graph['459:452']['inputs']['prompt'])
+        self.assertEqual(graph['459:452']['inputs']['prompt'], prompt)
+        self.assertIn('photorealistic', prompt)
+        self.assertIn('3D render', prompt)
+        self.assertIn('realistic game character', prompt)
+        self.assertIn('flat cel shading', prompt)
+        for feature in ('fine intricate refined linework', 'finely rendered character detail',
+                        'natural color transitions', 'natural painterly shading',
+                        'dimensional lighting', 'delicate textures in hair, irises and fabric',
+                        'thick black outlines', 'rough sketch textures'):
+            self.assertIn(feature, prompt)
+
+
+    def test_explicit_style_remains_authoritative_without_negative_conditioning(self):
+        for style in ('watercolor', 'photorealistic', '3D render', 'flat cel shading'):
+            request = 'Use ' + style + ' for this character.'
+            graph, _, prompt, _ = prepare_draft(self.settings, request, 42)
+            self.assertTrue(prompt.endswith(request))
+            self.assertIn('takes priority over this entire default', prompt)
+            self.assertEqual(graph['459:452']['inputs']['negative_prompt'], '')
 
     def test_invalid_input_or_graph_blocks(self):
         for settings, prompt, seed in [({}, self.prompt, 42), (self.settings, '', 42),
@@ -69,7 +95,7 @@ class DraftTests(unittest.TestCase):
             data = json.loads(Path(result['metadata_file']).read_text(encoding='utf-8'))
             self.assertEqual(data['character_settings'], self.settings)
             self.assertEqual(data['workflow'], request.call_args_list[0].args[1]['prompt'])
-            self.assertEqual(data['prompt'], self.prompt)
+            self.assertEqual(data['prompt'], apply_trpg_style(self.prompt))
             self.assertEqual(data['seed'], 42)
             self.assertEqual(data['status'], 'pending_approval')
             self.assertIsNone(data['character'])

@@ -11,6 +11,7 @@ from unittest.mock import Mock, patch
 from character_scene import prepare_scene, create_scene, prepare_qwen_graph
 from comfy_client import ComfyClient, ComfyError, ROOT
 import mcp_server
+from trpg_style import TRPG_STYLE_PRESET
 
 
 def fixture_png():
@@ -43,6 +44,15 @@ class SceneTests(unittest.TestCase):
         self.assertEqual(prepared[0]['459:456']['inputs']['width'], 1024)
         self.assertNotIn('images.image_2', prepared[0]['459:474']['inputs'])
         self.assertEqual(prepared[0]['459:474']['inputs']['images.image_1'], ['470', 0])
+
+    def test_explicit_scene_style_overrides_reference_style_in_prompt(self):
+        request = 'At a harbor. Use a photorealistic 3D render style.'
+        prepared = prepare_scene(self.profile, self.root, request)
+        self.assertIn(request, prepared[4])
+        self.assertIn('including its exclusions and any reference-image style preservation', prepared[4])
+        self.assertEqual(prepared[5]['scene_description'], request)
+        self.assertEqual(self.reference.read_bytes(), self.data)
+        self.assertNotIn('default_style', self.profile)
 
     def test_reject_unregistered_or_wrong_folder_or_invalid_png(self):
         outside = self.root / 'reference_v1.png'; outside.write_bytes(self.data)
@@ -80,6 +90,7 @@ class SceneTests(unittest.TestCase):
         sent = request.call_args_list[0].args[1]['prompt']
         self.assertEqual(sent['470']['inputs']['image'], 'uploaded.png')
         self.assertEqual(sent['459:474']['inputs']['prompt'], metadata['prompt'])
+        self.assertIn(TRPG_STYLE_PRESET, metadata['prompt'])
         self.assertEqual(sent['459:458']['inputs']['seed'], 42)
         self.assertEqual(metadata['workflow'], sent)
         self.assertEqual({m['filename'] for m in metadata['models']}, {

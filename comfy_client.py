@@ -149,18 +149,28 @@ def character_folder(output_dir, character=None, output_subdir=None):
     return output_folder(output_dir, profile["folder_name"] if profile else character, output_subdir)
 
 
+def prepare_generation_workflow():
+    """Reuse the validated Qwen T2I graph; legacy config workflow keys are ignored."""
+    from character_draft import prepare_draft
+    graph, _, _, _ = prepare_draft({"purpose": "general generation"}, "placeholder", 0)
+    graph["459:456"]["inputs"].update(width=1024, height=1024, batch_size=1)
+    del graph["13"]
+    graph["461"]["inputs"]["filename_prefix"] = "Qwen_generate"
+    return graph
+
+
 def generate_image(client, workflow, prompt, output_dir, timeout=900, seed=None, width=1024, height=1024, *, character=None, output_subdir=None):
     if not prompt.strip():
         raise ComfyError("프롬프트를 입력하세요.")
     if any(size < 64 or size > 2048 or size % 16 for size in (width, height)):
         raise ComfyError("이미지 크기는 64~2048 사이의 16 배수여야 합니다.")
     seed = secrets.randbelow(2**63) if seed is None else seed
-    if not 0 <= seed < 2**64:
+    if type(seed) is not int or not 0 <= seed < 2**64:
         raise ComfyError("seed는 0 이상 2**64 미만이어야 합니다.")
     workflow = json.loads(json.dumps(workflow))
-    workflow["27"]["inputs"]["text"] = prompt
-    workflow["3"]["inputs"]["seed"] = seed
-    workflow["13"]["inputs"].update(width=width, height=height)
+    workflow["459:452"]["inputs"]["prompt"] = prompt
+    workflow["459:458"]["inputs"]["seed"] = seed
+    workflow["459:456"]["inputs"].update(width=width, height=height, batch_size=1)
     folder = character_folder(output_dir, character, output_subdir)
     client.check(workflow)
     prepare_output(folder)  # Fail before enqueueing if destination is unwritable.
@@ -173,7 +183,8 @@ def generate_image(client, workflow, prompt, output_dir, timeout=900, seed=None,
     completed_at = datetime.now(timezone.utc).isoformat()
     files = client.save(prompt_id, entry, folder)
     try:
-        metadata_file = save_metadata(folder, prompt_id, workflow, files, character, entry, completed_at)
+        metadata_file = save_metadata(folder, prompt_id, workflow, files, character, entry, completed_at,
+                                      prompt=prompt, seed=seed, extra={"engine": "Qwen Image 2.1 T2I"})
     except OSError as exc:
         raise ComfyError(f"이미지는 저장됐지만 메타데이터 저장에 실패했습니다. prompt_id={prompt_id}, files={files}: {exc}") from exc
     return {"prompt_id": prompt_id, "seed": seed, "files": files, "metadata_file": metadata_file, "character": character}
@@ -270,7 +281,7 @@ def main():
             folder = character_folder(config["output_dir"], args.character, args.output_subdir)
             result = {"prompt_id": prompt_id, "files": client.save(prompt_id, entry, folder)}
         else:
-            workflow = load_workflow(args.config.resolve().parent / config["workflow"])
+            workflow = prepare_generation_workflow()
             if args.command == "check":
                 stats = client.check(workflow)
                 prepare_output(config["output_dir"])

@@ -22,7 +22,7 @@ async def check():
             initialized = await session.initialize()
             result = await session.list_tools()
             tools = {tool.name: tool for tool in result.tools}
-            if set(tools) != {"comfyui_status", "generate_image", "get_character", "save_character"}:
+            if set(tools) != {"comfyui_status", "generate_image", "get_character", "save_character", "edit_image", "create_character_draft", "create_character_scene"}:
                 raise AssertionError(f"Unexpected tools: {list(tools)}")
             schema = tools["generate_image"].inputSchema
             if set(schema["properties"]) != {"prompt", "character", "seed"}:

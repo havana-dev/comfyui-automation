@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 from comfy_client import ComfyError, ROOT, load_workflow, prepare_output
 from result_store import output_folder, save_metadata
+from trpg_style import apply_trpg_style
 
 
 def prepare_draft(character_settings, prompt, seed=None):
@@ -39,6 +40,7 @@ def prepare_draft(character_settings, prompt, seed=None):
         node = graph.get(node_id, {})
         if node.get("class_type") != kind or any(f not in node.get("inputs", {}) for f in fields):
             raise ComfyError(f"Qwen T2I workflow binding mismatch: {node_id} must be {kind} with {fields}")
+    prompt = apply_trpg_style(prompt)
     # Bypass the sample prompt, switch, preview and optional rewriting model.
     graph["459:452"]["inputs"].update(prompt=prompt.strip(), negative_prompt="")
     graph["459:458"]["inputs"]["seed"] = seed

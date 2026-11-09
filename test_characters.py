@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from character_store import CharacterStore
-from comfy_client import ROOT, character_folder, generate_image, load_workflow
+from comfy_client import ROOT, character_folder, generate_image, prepare_generation_workflow
 from unittest.mock import Mock, patch
 
 
@@ -25,7 +25,7 @@ class CharacterTests(unittest.TestCase):
             store = CharacterStore(Path(tmp) / 'characters', Path(tmp) / 'images')
             profile = store.save('예시 캐릭터', name_ko='예시 캐릭터', name_en='Example Character', aliases=['예시', 'Example'])
             expected_id = profile['id']
-            workflow = load_workflow(ROOT / 'workflows/z_image_turbo_api.json')
+            workflow = prepare_generation_workflow()
             for name in ['예시', '예시 캐릭터', 'Example', 'Example Character', expected_id]:
                 with self.subTest(name=name):
                     self.assertEqual(store.get(name)['id'], expected_id)

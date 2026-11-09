@@ -1,15 +1,10 @@
-# ComfyUI 이미지 자동화 — 1단계
+# ComfyUI 이미지 자동화 — Qwen Image 2.1
 
 Python 표준 라이브러리로 로컬 ComfyUI API를 호출합니다. pip 설치가 필요 없으며 ComfyUI 설치/모델/원본 소스를 변경하지 않습니다.
 
-## 확인한 환경 (2026-11-08)
-
-- Desktop 실행 기록과 프로세스 기록의 주소: `http://127.0.0.1:8188`
-- Desktop 설치: `<Desktop 설치 폴더>`
-- 별도 분석용 원본: `<ComfyUI 소스 폴더>`
-- 모델: `<모델 폴더>` 아래 diffusion_models/z_image_turbo_bf16.safetensors, text_encoders/qwen_3_4b.safetensors, vae/ae.safetensors 확인.
-- 대상 저장 폴더: `<output_dir>`
-- 사용자 실행으로 `run.ps1 check`, `run.ps1 generate` 및 `<output_dir>` 이미지 저장 성공을 확인했습니다. 에이전트 실행 환경의 localhost 접속 제한은 별개입니다.
+일반 생성과 신규 캐릭터 초안은 Qwen Image 2.1 T2I, 편집과 캐릭터 장면은 Qwen Image 2.1 참조 이미지 그래프를 사용합니다.
+필요 모델은 `qwen_image_2.1_int8_convrot.safetensors`, `qwen3vl_8b_int8_convrot.safetensors`,
+`qwen_image_2.1_vae_bf16.safetensors`이며 기존 ComfyUI 노드 설치가 필요합니다. 자동 설치나 다운로드는 하지 않습니다.
 
 ## 파일 구성
 
@@ -18,11 +13,18 @@ Python 표준 라이브러리로 로컬 ComfyUI API를 호출합니다. pip 설�
 | comfy_client.py | API 확인, 모델/노드 목록 검증, 생성 요청, 완료 대기, PNG 다운로드 |
 | result_store.py | 출력 하위 경로 검증, 생성 메타데이터 JSON 저장 |
 | config.json | 서버 주소, 출력 경로, 워크플로, 대기 제한 |
-| workflows/z_image_turbo_api.json | 설치된 공식 템플릿의 노드/설정을 수동으로 API 형식으로 변환 |
+| workflows/qwen21_text_to_image_api.json | 설치된 공식 템플릿의 노드/설정을 수동으로 API 형식으로 변환 |
 | run.ps1 | 기존 Desktop Python으로 실행 |
 | test_client.py | 서버 없이 요청 구성·오류·저장 동작 검증 |
 
-사용자 저장 워크플로는 발견되지 않아 설치된 공식 `comfyui_workflow_templates_json/templates/image_z_image_turbo.json`을 기반으로 했습니다. 서브그래프를 펼쳤으며 8 steps, CFG 1, res_multistep/simple, shift 3 설정을 유지했습니다. 일반 UI JSON을 직접 API로 보내지 않습니다. 현재 프롬프트/시드/크기 변경은 제공된 워크플로의 노드 ID에 맞춰져 있습니다.
+일반 생성은 초안 도구의 검증된 Qwen T2I 그래프 준비 함수를 재사용합니다. 샘플 프롬프트,
+선택 스위치, 미리보기와 선택적 프롬프트 재작성 모델은 제출 그래프에서 제외합니다.
+25 steps, CFG 1, euler_ancestral/simple을 유지하며 일반 생성은 요청한 크기를 latent에 직접 지정합니다.
+초안과 장면의 기존 해상도 처리는 유지합니다.
+
+기존 `config.json`은 그대로 사용할 수 있습니다. `workflow`, `edit_engine`, `edit_workflow`는
+이전 설정과의 호환을 위해 허용하지만 엔진 선택에는 사용하지 않습니다. 일반 생성과 CLI check는
+프로젝트의 Qwen T2I 그래프, 편집은 Qwen 장면 그래프를 사용합니다. 새 설정 예시는 Qwen 경로를 표시합니다.
 
 ## 실행
 
@@ -130,22 +132,18 @@ to `TextEncodeQwenImage21.prompt` (the actual positive prompt field). No officia
 is substituted when an edit source is supplied. JSON records `reference_image`,
 `reference_sha256` of the uploaded bytes, prompt, seed, models and submitted graph.
 
-The preserved FLUX.2 Klein 4B FP8 API graph is `workflows/flux2_klein_edit_api.json`.
-Set `edit_engine` to `klein` in `config.json` to select it; its existing `edit_workflow`
-configuration remains available. Omitted `edit_engine` defaults to `qwen`.
-The Klein configuration connects its actual inputs:
+Optional `style_reference_image` supplies a user-selected PNG as Qwen `images.image_2`.
+The edit target remains `images.image_1`. The composed prompt takes only linework,
+coloring and detailed semi-realistic anime rendering from image_2, preserving image_1's
+identity and appearance except for explicitly requested edits. It forbids copying the
+style reference's face, hair, outfit or accessories. No character's reference is selected
+automatically. Omitting this parameter preserves the existing single-image behavior.
+JSON also records the style reference path/SHA-256 and original `edit_instruction`;
+`prompt` contains the full submitted instruction.
+Style/identity separation is a prompt instruction, not a guaranteed identity lock.
 
-```json
-{"path": "workflows/flux2_klein_edit_api.json",
- "bindings": {"reference_image": ["76", "image"],
-              "instruction": ["75:74", "text"],
-              "seed": ["75:73", "noise_seed"]}}
-```
-
-The graph's model filenames, reference conditioning connections and image sizing are preserved.
-Missing graph/bindings produce an explicit error; unavailable nodes/models are checked via
-`/object_info` before uploading or submitting. Nothing is downloaded or installed.
-Existing `generate_image` behavior and background backend startup remain unchanged.
+Unavailable Qwen nodes/models are checked via `/object_info` before uploading or submitting.
+Nothing is downloaded or installed. Background backend startup remains unchanged.
 
 ### 클라이언트별 이미지 생성 지침
 
@@ -172,16 +170,16 @@ Codex는 이 프로젝트의 `AGENTS.md`를 작업 지침으로 사용합니다.
 영어 프롬프트, seed, 실제 그래프·모델, 임시 ID와 `pending_approval` 상태를 기록합니다.
 공식 캐릭터 데이터나 `reference_v1.png`를 만들지 않으며 승인·등록 요청 전에는
 `save_character`를 호출하지 않습니다. 실패·시간 초과 시 자동 재시도하지 않습니다.
-일반 `generate_image`의 Z-Image 설정과 기존 scene/edit/get/save 도구는 유지됩니다.
+일반 `generate_image`도 Qwen T2I를 사용하며 기존 scene/edit/get/save 기능은 유지됩니다.
 기존 JSON·모델·캐릭터 데이터는 수정하지 않습니다. MCP 재시작 후 새 도구가 노출됩니다.
 
-### Qwen Image 2.1 캐릭터 새 장면
+### 등록 캐릭터 새 장면 사용법
 
 `create_character_scene(character, scene_description, seed=None, pose_image=None)`은
 `workflows/qwen21_character_scene_api.json`을 기본으로 사용합니다. 한국어 한 문장 요청은
 Codex가 `get_character`로 이름·별칭을 조회하고 공식 이미지를 확인한 뒤, 저장된 설정과
 요청을 영어 `scene_description`으로 구성하여 호출합니다. 서버 자체 번역기는 없습니다.
-`generate_image`는 Z-Image, `edit_image`는 기본적으로 Qwen Image 2.1을 사용합니다.
+`generate_image`와 `edit_image`는 Qwen Image 2.1을 사용합니다.
 
 실제 API 연결은 `470: LoadImage.image`, `459:474: TextEncodeQwenImage21.prompt`와
 `images.image_1`, `459:458: KSampler.seed`입니다. 등록된 캐릭터 폴더의

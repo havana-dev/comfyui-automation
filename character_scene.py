@@ -6,6 +6,7 @@ from pathlib import Path
 
 from comfy_client import ComfyError, edit_image, load_workflow, ROOT
 from result_store import output_folder
+from trpg_style import apply_trpg_style
 
 BINDINGS = {"reference_image": ["470", "image"],
             "instruction": ["459:474", "prompt"], "seed": ["459:458", "seed"]}
@@ -116,6 +117,7 @@ def prepare_scene(profile, output_dir, scene_description, pose_image=None):
               "Do not copy the portrait composition. Scene: " + scene_description.strip())
     if pose:
         prompt += " Use reference image 2 only for body pose and layout, not its identity, clothes or art style."
+    prompt = apply_trpg_style(prompt)
     metadata = {"engine": "Qwen Image 2.1", "official_reference_image": str(reference),
                 "official_reference_sha256": hashlib.sha256(data).hexdigest(),
                 "character_id": profile["id"], "scene_description": scene_description,

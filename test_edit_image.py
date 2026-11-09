@@ -8,13 +8,14 @@ from unittest.mock import Mock, patch
 
 import mcp_server
 from comfy_client import ComfyClient, ComfyError, ROOT, edit_image
+from test_character_scene import fixture_png
 
 PNG = b'\x89PNG\r\n\x1a\nmock'
 GRAPH = {
     'image': {'class_type': 'LoadImage', 'inputs': {'image': 'placeholder.png'}},
     'text': {'class_type': 'CLIPTextEncode', 'inputs': {'text': 'old'}},
     'noise': {'class_type': 'RandomNoise', 'inputs': {'noise_seed': 0}},
-    'model': {'class_type': 'UNETLoader', 'inputs': {'unet_name': 'klein-fp8.safetensors'}},
+    'model': {'class_type': 'UNETLoader', 'inputs': {'unet_name': 'qwen_image_2.1_int8_convrot.safetensors'}},
 }
 BINDINGS = {'reference_image': ['image', 'image'], 'instruction': ['text', 'text'],
             'seed': ['noise', 'noise_seed']}
@@ -81,7 +82,7 @@ class EditTests(unittest.TestCase):
                   'edit_workflow': {'path': 'official.json', 'bindings': BINDINGS}}
         store = Mock()
         store.get.return_value = {'folder_name': 'existing-id', 'reference_images': ['reference_v1.png', 'other.png']}
-        with patch.object(mcp_server.Path, 'read_text', return_value=json.dumps(config)), patch.object(mcp_server.Path, 'is_file', return_value=True), patch.object(mcp_server, 'load_workflow', return_value=GRAPH), patch.object(mcp_server, 'character_store', return_value=store), patch.object(mcp_server, 'ensure_backend'), patch.object(mcp_server, 'edit_local_image', return_value={'ok': True}) as edit:
+        with patch.object(mcp_server.Path, 'read_text', return_value=json.dumps(config)), patch.object(mcp_server.Path, 'is_file', return_value=True), patch.object(mcp_server, 'prepare_qwen_graph', return_value={'461': {'inputs': {}}}), patch.object(mcp_server, 'character_store', return_value=store), patch.object(mcp_server, 'ensure_backend'), patch.object(mcp_server, 'edit_local_image', return_value={'ok': True}) as edit:
             self.assertEqual(mcp_server.edit_sync(None, 'hair', 'Example', 42), {'ok': True})
             self.assertEqual(edit.call_args.args[3], 'reference_v1.png')
             self.assertEqual(edit.call_args.kwargs['character'], 'existing-id')
@@ -172,37 +173,75 @@ class EditTests(unittest.TestCase):
             self.assertEqual(source.read_bytes(), PNG)
 
 
-class KleinWorkflowTests(unittest.TestCase):
-    def test_configured_official_graph_submits_bound_inputs_once(self):
-        config = json.loads((ROOT / 'config.example.json').read_text(encoding='utf-8-sig'))
-        settings = config['edit_workflow']
-        self.assertEqual(settings['path'], 'workflows/flux2_klein_edit_api.json')
-        self.assertEqual(settings['bindings'], {
-            'reference_image': ['76', 'image'], 'instruction': ['75:74', 'text'],
-            'seed': ['75:73', 'noise_seed']})
-        workflow_path = ROOT / settings['path']
-        original = workflow_path.read_bytes()
-        graph = json.loads(original)
-        self.assertEqual(graph['76']['class_type'], 'LoadImage')
-        self.assertEqual(graph['75:74']['class_type'], 'CLIPTextEncode')
-        self.assertEqual(graph['75:73']['class_type'], 'RandomNoise')
-        instruction = 'Keep the same character, face, hairstyle, clothing and illustration style. Change only her expression to a gentle smile.'
-        with tempfile.TemporaryDirectory(dir=ROOT) as folder:
-            reference = Path(folder) / 'reference_v1.png'
-            reference.write_bytes(PNG)
-            client = ComfyClient('http://127.0.0.1:8188')
-            entry = {'outputs': {'9': {'images': [{'filename': 'smile.png', 'type': 'output'}]}}}
-            with patch.object(client, 'check'), patch.object(client, 'upload_image', return_value='uploaded.png'), patch.object(client, 'wait', return_value=entry), patch.object(client, 'request', side_effect=[{'prompt_id': 'smile-test'}, PNG]) as request:
-                result = edit_image(client, graph, settings['bindings'], reference, instruction, folder, seed=42)
-            submitted = request.call_args_list[0].args[1]['prompt']
-            expected = json.loads(original)
-            expected['76']['inputs']['image'] = 'uploaded.png'
-            expected['75:74']['inputs']['text'] = instruction
-            expected['75:73']['inputs']['noise_seed'] = 42
-            self.assertEqual(submitted, expected)
-            self.assertEqual(sum(call.args[0] == '/prompt' for call in request.call_args_list), 1)
-            metadata = json.loads(Path(result['metadata_file']).read_text(encoding='utf-8'))
-            self.assertEqual(metadata['prompt'], instruction)
-            self.assertEqual(metadata['workflow'], submitted)
-            self.assertEqual(reference.read_bytes(), PNG)
-        self.assertEqual(workflow_path.read_bytes(), original)
+class StyleReferenceTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory(dir=ROOT)
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+        self.source = self.root / 'target.png'
+        self.source.write_bytes(PNG)
+        self.style = self.root / 'reference_v1.png'
+        self.style_bytes = fixture_png()
+        self.style.write_bytes(self.style_bytes)
+        self.config = {'base_url': 'http://127.0.0.1:8188', 'output_dir': str(self.root)}
+        self.write_config()
+        root_patch = patch.object(mcp_server, 'ROOT', self.root)
+        root_patch.start()
+        self.addCleanup(root_patch.stop)
+        backend_patch = patch.object(mcp_server, 'ensure_backend')
+        self.backend = backend_patch.start()
+        self.addCleanup(backend_patch.stop)
+
+    def write_config(self):
+        (self.root / 'config.json').write_text(json.dumps(self.config), encoding='utf-8')
+
+    def test_two_uploaded_images_keep_distinct_roles_and_metadata(self):
+        client = ComfyClient(self.config['base_url'])
+        instruction = 'Refine the illustration style while keeping this Egyptian woman unchanged.'
+        entry = {'outputs': {'461': {'images': [{'filename': 'edited.png', 'type': 'output'}]}}}
+        with patch.object(mcp_server, 'ComfyClient', return_value=client), patch.object(client, 'check') as check, patch.object(client, 'upload_image', side_effect=['target-upload.png', 'style-upload.png']) as upload, patch.object(client, 'wait', return_value=entry), patch.object(client, 'request', side_effect=[{'prompt_id': 'style-edit'}, PNG]) as request:
+            result = mcp_server.edit_sync(str(self.source), instruction, None, 42, str(self.style))
+        sent = request.call_args_list[0].args[1]['prompt']
+        self.assertEqual(sum(c.args[0] == '/prompt' for c in request.call_args_list), 1)
+        self.assertEqual(sent['470']['inputs']['image'], 'target-upload.png')
+        self.assertEqual(sent['459:474']['inputs']['images.image_1'], ['470', 0])
+        self.assertEqual(sent['459:474']['inputs']['images.image_2'], ['edit:style', 0])
+        self.assertEqual(sent['edit:style']['inputs']['image'], 'style-upload.png')
+        self.assertEqual(upload.call_count, 2)
+        self.assertEqual(upload.call_args_list[0].kwargs['image_bytes'], PNG)
+        self.assertEqual(upload.call_args_list[1].kwargs['image_bytes'], self.style_bytes)
+        self.assertNotIn('image', check.call_args.args[0]['edit:style']['inputs'])
+        prompt = sent['459:474']['inputs']['prompt']
+        self.assertIn(instruction, prompt)
+        self.assertIn('image_1 is the editing target and sole source of character identity', prompt)
+        self.assertIn('image_2 ONLY as an illustration style reference', prompt)
+        self.assertIn('Do not copy the person, face, hair color', prompt)
+        metadata = json.loads(Path(result['metadata_file']).read_text(encoding='utf-8'))
+        self.assertEqual(metadata['prompt'], prompt)
+        self.assertEqual(metadata['edit_instruction'], instruction)
+        self.assertEqual(metadata['reference_image'], str(self.source))
+        self.assertEqual(metadata['style_reference_image'], str(self.style))
+        self.assertEqual(metadata['style_reference_sha256'], hashlib.sha256(self.style_bytes).hexdigest())
+        self.assertEqual(self.source.read_bytes(), PNG)
+        self.assertEqual(self.style.read_bytes(), self.style_bytes)
+        self.assertFalse(mcp_server.generation_lock.locked())
+
+    def test_invalid_style_fails_before_backend_or_upload(self):
+        invalid = self.root / 'invalid.png'; invalid.write_bytes(b'not a PNG')
+        with patch.object(mcp_server, 'edit_local_image') as edit:
+            for style, instruction in [(invalid, 'Edit'), (self.root / 'missing.png', 'Edit'), (self.style, '')]:
+                with self.subTest(style=style, instruction=instruction):
+                    with self.assertRaises(ComfyError):
+                        mcp_server.edit_sync(str(self.source), instruction, None, 42, str(style))
+                    self.assertFalse(mcp_server.generation_lock.locked())
+            edit.assert_not_called()
+        self.backend.assert_not_called()
+
+    def test_legacy_engine_setting_still_uses_qwen_style_reference(self):
+        self.config['edit_engine'] = 'klein'
+        self.write_config()
+        with patch.object(mcp_server, 'edit_local_image', return_value={'ok': True}) as edit:
+            self.assertEqual(mcp_server.edit_sync(str(self.source), 'Edit', None, 42, str(self.style)), {'ok': True})
+        self.assertEqual(edit.call_args.kwargs['metadata_extra']['engine'], 'Qwen Image 2.1')
+        self.assertIn('edit:style', edit.call_args.args[1])
+        self.assertFalse(mcp_server.generation_lock.locked())

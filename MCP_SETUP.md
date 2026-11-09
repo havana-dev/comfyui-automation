@@ -2,14 +2,23 @@
 
 ## 구현 범위
 
-기존 comfy_client.py, result_store.py, run.ps1, config.json 및 워크플로는 수정하지 않았습니다. 새 mcp_server.py가 기존 generate_image 함수를 호출합니다. 서버 시작과 tools/list에서는 ComfyUI 접속이나 이미지 생성을 하지 않습니다.
+기존 클라이언트와 저장 함수를 재사용하는 Qwen Image 2.1 전용 STDIO 서버입니다.
+서버 시작과 tools/list에서는 ComfyUI 접속이나 이미지 생성을 하지 않습니다.
+기존 config.json은 변경 없이 사용하며 이전 workflow/edit_engine/edit_workflow 설정은 무시합니다.
+comfyui_status와 CLI check는 Qwen T2I 노드와 모델을 검사합니다.
 
 공식 Python MCP SDK의 FastMCP/STDIO를 사용합니다. 독립 패키지 fastmcp가 아닙니다. SDK v1 유지보수 계열 API에 맞춰 `mcp>=1.28,<2`로 제한했습니다. 공식 문서상 현재 주 안정 계열은 v2이며, 이 코드는 v2 API로 자동 전환하지 않습니다. Python은 기존 Desktop의 3.13을 기반으로 프로젝트 전용 .venv-mcp를 만들며, ComfyUI의 패키지를 설치하거나 변경하지 않습니다.
 
 | 도구 | 입력 | 동작 / 반환 |
 |---|---|---|
 | comfyui_status | 없음 | 서버와 워크플로/모델 목록 확인. ready, devices, output_dir 등 반환. 파일 생성 및 쓰기 권한 검사는 하지 않음 |
-| generate_image | prompt 필수, character/seed 선택 | 기존 생성/저장 함수 실행. prompt_id, seed, files(PNG 경로 목록), metadata_file(JSON 경로), character 반환 |
+| generate_image | prompt 필수, character/seed 선택 | Qwen 2.1 T2I 생성/저장 함수 실행. prompt_id, seed, files(PNG 경로 목록), metadata_file(JSON 경로), character 반환 |
+
+| edit_image | reference_image/instruction/character/seed/style_reference_image | Qwen 편집. 스타일 참조는 선택적이며 명시된 경우만 사용 |
+| create_character_draft | character_settings, prompt, seed 선택 | Qwen T2I 승인 대기 초안. 자동 등록 없음 |
+| create_character_scene | character, scene_description, seed/pose_image 선택 | 공식 reference_v1.png를 검증하여 Qwen 새 장면 생성 |
+| get_character | name | 설정과 참조 경로 조회 |
+| save_character | name 및 선택 설정 | 명시적으로 제공한 설정만 저장 |
 
 생성 크기는 기존 기본값인 1024×1024, 1장입니다. character는 `E:\AI\Outputs\캐릭터명` 저장용이며 프롬프트에 자동 삽입하지 않습니다. output-subdir는 이번 MCP 도구 인자에 노출하지 않았으며 CLI에서는 계속 사용할 수 있습니다. 반환값은 경로이며 이미지 바이너리/미리보기 전송은 하지 않습니다.
 
@@ -35,9 +44,11 @@ PowerShell 실행 정책 때문에 ps1이 막히면 정책 변경 없이 아래 
 .\.venv-mcp\Scripts\python.exe -B -m unittest -v test_client test_mcp_adapter
 ```
 
-목록 테스트는 공식 SDK 클라이언트로 실제 서버 자식 프로세스를 띄운 뒤 initialize와 tools/list만 호출합니다. 도구 2개의 이름과 생성 도구 입력 스키마를 검사합니다. 성공하면 `ok: true`, `image_generation_requested: false`, 두 도구의 스키마가 표시됩니다. 테스트 클라이언트가 터미널에 표시하는 JSON은 서버의 프로토콜 stdout과 별개입니다.
+목록 테스트는 공식 SDK 클라이언트로 실제 서버 자식 프로세스를 띄운 뒤 initialize와 tools/list만 호출합니다. 도구 7개의 이름과 생성 도구 입력 스키마를 검사합니다. 성공하면 `ok: true`, `image_generation_requested: false`, 7개 도구의 스키마가 표시됩니다. 테스트 클라이언트가 터미널에 표시하는 JSON은 서버의 프로토콜 stdout과 별개입니다.
 
-현재 검증 상태: 기존 CLI 모의 테스트 7개 통과. 에이전트 환경에서 pip가 mcp 배포본을 찾지 못해 SDK 설치 실패 (`No matching distribution found`). 따라서 실제 STDIO 목록 조회 및 SDK 어댑터 테스트는 미검증입니다. check_mcp_tools.py 실행 시 SDK 미설치 오류를 확인했습니다. 이미지 생성은 요청하지 않았습니다. 일반 PowerShell 설치 후 위 테스트로 검증을 완료해야 합니다.
+전체 모의 테스트: `.\.venv-mcp\Scripts\python.exe -B -m unittest discover -v`.
+STDIO 목록 검증: `.\.venv-mcp\Scripts\python.exe -B check_mcp_tools.py` (tools/call 없음).
+실제 GPU의 Qwen T2I, 단일/스타일 참조 편집, 캐릭터 장면은 별도 생성 검증이 필요합니다.
 
 ## Windows Claude Desktop
 
