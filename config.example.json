@@ -3,6 +3,10 @@
   "output_dir": "./outputs",
   "workflow": "workflows/qwen21_text_to_image_api.json",
   "timeout_seconds": 900,
+  "references": {
+    "max_official_references": 4,
+    "max_total_references": 8
+  },
   "backend": {
     "base_dir": "C:/path/to/ComfyUI-Installs/ComfyUI",
     "models_config": "C:/path/to/instance-model-paths.yaml",

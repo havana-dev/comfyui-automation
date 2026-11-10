@@ -179,7 +179,7 @@ Codex는 이 프로젝트의 `AGENTS.md`를 작업 지침으로 사용합니다.
 
 ### 등록 캐릭터 새 장면 사용법
 
-`create_character_scene(character, scene_description, seed=None, pose_image=None)`은
+`create_character_scene(character, scene_description, seed=None, pose_image=None, style_reference_image=None, extra_references=None)`은
 `workflows/qwen21_character_scene_api.json`을 기본으로 사용합니다. 한국어 한 문장 요청은
 Codex가 `get_character`로 이름·별칭을 조회하고 공식 이미지를 확인한 뒤, 저장된 설정과
 요청을 영어 `scene_description`으로 구성하여 호출합니다. 서버 자체 번역기는 없습니다.
@@ -188,8 +188,29 @@ Codex가 `get_character`로 이름·별칭을 조회하고 공식 이미지를 �
 실제 API 연결은 `470: LoadImage.image`, `459:474: TextEncodeQwenImage21.prompt`와
 `images.image_1`, `459:458: KSampler.seed`입니다. 등록된 캐릭터 폴더의
 `reference_v1.png`를 검증하고 그 바이트를 고유 이름으로 업로드합니다.
-사용자가 지정한 `pose_image`만 `images.image_2`로 연결합니다. 이 추가 입력은 설치된
+같은 캐릭터 폴더에 있고 `reference_images`에 등록된 `reference_v2.png`, `reference_v3.png` …도
+추가 공식 시점으로 자동 연결합니다(v1이 우선). 등록되지 않았거나 폴더 밖에 있거나
+이름 규칙이 다른 파일(예: `reference_v0_original_backup.png`, 이전 생성 결과)은 쓰지 않습니다.
+공식 이미지 다음 칸부터는 사용자가 고른 참고 이미지를 연결합니다. 역할은 코드가 정하지 않고,
+`extra_references`에 `[{"image": "PNG 경로", "use": "the standing pose with the right side of the face visible"}]`처럼
+이미지마다 **무엇을 가져올지 사용자가 정한 문장**을 적습니다. 대화에서는 사진을 순서 없이 넣고
+"이건 자세, 이건 그림체, 이건 비녀"라고 말하면 AI가 그 말을 영어 `use`로 옮깁니다.
+서버는 각 `use`를 그대로 넣고, 적히지 않은 인물·얼굴·배경·장소·소품·글자·구도는 가져오지 않는다는
+공통 문장 하나만 덧붙입니다(장소는 장면 설명에서만). `pose_image`와 `style_reference_image`는 기본
+설명("the body pose only", "the illustration style only …")을 붙여 목록 맨 앞에 넣는 바로가기입니다.
+예: 공식 2장 + 참고 4장(자세, 그림체, 헤어, 비녀) → `image_1`~`image_6`. 이 추가 입력은 설치된
 `nodes_qwen.py`의 `images` Autogrow 스키마(`image_1`~`image_16`)에 따릅니다.
+
+참조 이미지가 늘수록 VRAM과 생성 시간이 늘어나며, 결과 크기는 `image_1`(v1) 크기를 따릅니다.
+장수 제한은 `config.json`의 선택 항목 `references`로 조절합니다. 항목이 없으면 기본값을 씁니다.
+
+```json
+"references": {"max_official_references": 4, "max_total_references": 8}
+```
+
+`max_official_references`는 자동으로 넣는 공식 시점 수, `max_total_references`는 공식·포즈·
+그림체·부분 참조를 합친 전체 수입니다(각 1~16, 공식 ≤ 전체). 전체 수를 넘으면 ComfyUI에
+제출하기 전에 오류로 중단합니다. 기본값은 16GB GPU 기준의 보수적인 추정치이며, 사양이 높으면 올릴 수 있습니다.
 실행 그래프에서는 템플릿의 추가 이미지와 샘플 프롬프트·프롬프트 재작성·미리보기 분기를
 제외하고 영어 프롬프트를 인코더에 직접 전달합니다. 원본 워크플로 파일은 보존합니다.
 

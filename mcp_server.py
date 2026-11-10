@@ -98,7 +98,7 @@ mcp = FastMCP(
     instructions=(
         "Use comfyui_status to check the local ComfyUI server. "
         "Only generate an image when the user requests one. "
-        "For a new scene of a registered character, call get_character, translate the user's scene and known profile facts into an English scene_description, and use create_character_scene. It validates the official reference_v1.png; never use a previous output for an independent scene. Do not require the user to write English. Identity/style preservation is best effort. "
+        "For a new scene of a registered character, call get_character, translate the user's scene and known profile facts into an English scene_description, and use create_character_scene. It validates the official reference_v1.png and also uses registered reference_v2.png, reference_v3.png ... from the same character folder as extra views; never use a previous output for an independent scene. Do not require the user to write English. Identity/style preservation is best effort. "
         "generate_image saves PNG and JSON files on this Windows PC and returns paths. "
         "It can take several minutes. On timeout, do not automatically resubmit: "
         "the ComfyUI job may still be running. For named characters, call get_character first. For a new character without reference images, use create_character_draft (Qwen Image 2.1 T2I) with user-provided character_settings and an English prompt composed by you from the Korean request. Do not ask the user to write English. Drafts are pending approval, not registered characters; never call save_character or register reference_v1.png before explicit user approval. Never invent permanent appearance, age, era or style. Translate the Korean request and known profile facts into an English prompt yourself, honoring current outfit/style requests without overwriting the profile. For other general text-only generation, use generate_image. Unknown facts stay unspecified. For requested edits, use edit_image with the intended edit source; generate_image does not use references. Registered names, aliases, IDs and folder names resolve to the same character folder. Unknown names remain folder labels. Character is not a prompt addition."
@@ -245,7 +245,8 @@ async def create_character_draft(character_settings: dict, prompt: str, seed: in
     return await run_tool(create_character_draft_sync, character_settings, prompt, seed)
 
 
-def create_character_scene_sync(character, scene_description, seed, pose_image):
+def create_character_scene_sync(character, scene_description, seed, pose_image, style_reference_image=None,
+                                extra_references=None):
     if not generation_lock.acquire(blocking=False):
         raise ComfyError("This MCP process is already generating an image. Wait for it to finish.")
     try:
@@ -258,7 +259,8 @@ def create_character_scene_sync(character, scene_description, seed, pose_image):
             raise ComfyError("timeout_seconds must be finite and positive")
         if seed is not None and (not isinstance(seed, int) or not 0 <= seed < 2**64):
             raise ComfyError("seed must be an integer in [0, 2**64).")
-        prepared = prepare_scene(profile, config["output_dir"], scene_description, pose_image)
+        prepared = prepare_scene(profile, config["output_dir"], scene_description, pose_image, style_reference_image,
+                                 extra_references, config.get("references"))
         client = ComfyClient(config["base_url"])
         ensure_backend(client)
         return create_scene(client, prepared, config["output_dir"], timeout, seed, profile["folder_name"])
@@ -268,18 +270,32 @@ def create_character_scene_sync(character, scene_description, seed, pose_image):
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False))
 async def create_character_scene(character: str, scene_description: str,
-                                 seed: int | None = None, pose_image: str | None = None) -> dict:
-    """Create one Qwen Image 2.1 scene from a registered character's official reference_v1.png.
-    character accepts a registered name, alias or ID. The calling assistant must first
-    get_character and compose scene_description in English from the Korean request plus
-    saved appearance, accessories, era and style; the user need not provide English.
-    Include the default delicate semi-realistic 2D anime TRPG style unless the user
-    requests another style; explicit style instructions override reference style.
-    This tool has no internal translator. pose_image is an optional PNG used only for pose.
+                                 seed: int | None = None, pose_image: str | None = None,
+                                 style_reference_image: str | None = None,
+                                 extra_references: list[dict[str, str]] | None = None) -> dict:
+    """Create one Qwen Image 2.1 scene from a registered character's official references.
+    reference_v1.png is required; registered reference_v2.png, reference_v3.png ... in the
+    same character folder are added automatically as extra identity views (v1 primary;
+    count limited by config.json references.max_official_references, default 4).
+    extra_references is an optional list of {"image": PNG path, "use": short English
+    description of exactly what to take from that image}, in any order. The user decides
+    what each image is for; translate their words faithfully, e.g. "the standing pose
+    with the right side of the face visible", "the illustration style", "the hairpin
+    design", "the hairstyle shape only". Anything not described is not taken.
+    pose_image and style_reference_image are shortcuts that add an entry with a default
+    description ("the body pose only" / "the illustration style only").
+    The total number of images is limited by references.max_total_references (default 8,
+    max 16). character accepts a registered name, alias or ID. The calling assistant
+    must first get_character and compose scene_description in English from the Korean
+    request plus saved appearance, accessories, era and style; the user need not provide
+    English. Include the character's saved default_style (or the default TRPG style) unless
+    the user requests another style; explicit style instructions override reference style.
+    This tool has no internal translator. Pass extra images only when the user chose them.
     No previous output is selected. Returns PNG/JSON paths; both contain reference provenance.
     Best-effort likeness/style, not an identity lock. Never automatically retry.
     """
-    return await run_tool(create_character_scene_sync, character, scene_description, seed, pose_image)
+    return await run_tool(create_character_scene_sync, character, scene_description, seed,
+                          pose_image, style_reference_image, extra_references)
 
 
 async def run_tool(function, *args):
@@ -322,7 +338,9 @@ async def save_character(name: str, name_ko: str | None = None, name_en: str | N
                          default_style: str | None = None,
                          reference_images: list[str] | None = None) -> dict:
     """Create/update only supplied facts and create an image folder. Omitted fields are preserved.
-    Age is free text. Reference paths are stored only; edit_image can load them for editing.
+    Age is free text. Reference paths are stored as given; edit_image can load them for editing.
+    create_character_scene uses only reference_v1.png (required) and reference_v2.png ... files
+    inside the character's own folder; register new official views only after user approval.
     Use returned folder_name as generate_image.character after composing an English prompt.
     """
     fields = dict(name_ko=name_ko, name_en=name_en, aliases=aliases, appearance=appearance,

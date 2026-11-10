@@ -40,7 +40,7 @@ class SceneTests(unittest.TestCase):
         prepared = prepare_scene(self.profile, self.root, 'Sitting on a terrace')
         self.assertEqual(prepared[1], self.reference)
         self.assertEqual(prepared[5]['official_reference_sha256'], hashlib.sha256(self.data).hexdigest())
-        self.assertNotIn('scene:pose', prepared[0])
+        self.assertNotIn('scene:extra1', prepared[0])
         self.assertEqual(prepared[0]['459:456']['inputs']['width'], 1024)
         self.assertNotIn('images.image_2', prepared[0]['459:474']['inputs'])
         self.assertEqual(prepared[0]['459:474']['inputs']['images.image_1'], ['470', 0])
@@ -70,9 +70,145 @@ class SceneTests(unittest.TestCase):
         pose = self.root / 'pose.png'; pose.write_bytes(self.data)
         graph, *rest = prepare_scene(self.profile, self.root, 'Seated', pose)
         self.assertEqual(graph['459:474']['inputs']['images.image_1'], ['470', 0])
-        self.assertEqual(graph['459:474']['inputs']['images.image_2'], ['scene:pose', 0])
+        self.assertEqual(graph['459:474']['inputs']['images.image_2'], ['scene:extra1', 0])
+        self.assertIn('From reference image 2, take only: the body pose only.', rest[3])
         with self.assertRaisesRegex(ComfyError, 'not found'):
             prepare_scene(self.profile, self.root, 'Scene', self.root/'missing.png')
+
+    def add_official(self, version, register=True):
+        path = self.folder / f'reference_v{version}.png'
+        path.write_bytes(self.data)
+        if register:
+            self.profile['reference_images'].append(str(path))
+        return path
+
+    def test_registered_extra_views_pose_and_style_get_ordered_slots(self):
+        v2, v3 = self.add_official(2), self.add_official(3)
+        pose = self.root / 'pose.png'; pose.write_bytes(self.data)
+        style = self.root / 'style.png'; style.write_bytes(self.data)
+        graph, reference, _, additional, prompt, metadata = prepare_scene(
+            self.profile, self.root, 'Reading in a study', pose, style)
+        inputs = graph['459:474']['inputs']
+        self.assertEqual(reference, self.reference)
+        self.assertEqual(inputs['images.image_1'], ['470', 0])
+        self.assertEqual(inputs['images.image_2'], ['scene:reference2', 0])
+        self.assertEqual(inputs['images.image_3'], ['scene:reference3', 0])
+        self.assertEqual(inputs['images.image_4'], ['scene:extra1', 0])
+        self.assertEqual(inputs['images.image_5'], ['scene:extra2', 0])
+        self.assertEqual([additional[n][0] for n in ('scene:reference2', 'scene:reference3', 'scene:extra1', 'scene:extra2')],
+                         [v2, v3, pose.resolve(), style.resolve()])
+        self.assertIn('reference images 1 to 3', prompt)
+        self.assertIn('From reference image 4, take only: the body pose only.', prompt)
+        self.assertIn('From reference image 5, take only: the illustration style only', prompt)
+        self.assertIn('take nothing beyond what is listed for each one', prompt)
+        self.assertIn('The setting comes from the scene description.', prompt)
+        self.assertEqual([item['path'] for item in metadata['official_reference_images']],
+                         [str(self.reference), str(v2), str(v3)])
+        self.assertEqual(metadata['style_reference_image'], str(style.resolve()))
+
+    def test_unregistered_outside_or_backup_files_are_not_extra_views(self):
+        self.add_official(2, register=False)
+        outside = self.root / 'reference_v3.png'; outside.write_bytes(self.data)
+        backup = self.folder / 'reference_v0_original_backup.png'; backup.write_bytes(self.data)
+        self.profile['reference_images'] += [str(outside), str(backup)]
+        graph, _, _, additional, prompt, metadata = prepare_scene(self.profile, self.root, 'Scene')
+        self.assertEqual([f for f in graph['459:474']['inputs'] if f.startswith('images.')], ['images.image_1'])
+        self.assertEqual(additional, {})
+        self.assertEqual(len(metadata['official_reference_images']), 1)
+        self.assertIn('from reference image 1', prompt)
+
+    def test_extra_views_are_capped_and_v1_is_still_required(self):
+        for version in range(2, 7):
+            self.add_official(version)
+        graph, *_ = prepare_scene(self.profile, self.root, 'Scene')
+        slots = [f for f in graph['459:474']['inputs'] if f.startswith('images.')]
+        self.assertEqual(len(slots), 4)
+        self.assertNotIn('scene:reference5', graph)
+        self.profile['reference_images'] = [p for p in self.profile['reference_images']
+                                            if not p.endswith('reference_v1.png')]
+        with self.assertRaisesRegex(ComfyError, 'reference_v1.png'):
+            prepare_scene(self.profile, self.root, 'Scene')
+
+    def test_user_described_references_keep_order_and_their_own_words(self):
+        self.add_official(2)
+        pose = self.root / 'pose.png'; pose.write_bytes(self.data)
+        style = self.root / 'style.png'; style.write_bytes(self.data)
+        pin = self.root / 'pin.png'; pin.write_bytes(self.data)
+        hair = self.root / 'hair.png'; hair.write_bytes(self.data)
+        extras = [{'image': str(pin), 'use': 'the hairpin design'},
+                  {'image': str(hair), 'use': 'the hairstyle shape only'},
+                  {'image': str(pose), 'use': 'the standing pose with the right side of the face visible'}]
+        graph, _, _, additional, prompt, metadata = prepare_scene(
+            self.profile, self.root, 'Standing', None, style, extras)
+        inputs = graph['459:474']['inputs']
+        self.assertEqual([inputs[f'images.image_{n}'] for n in range(3, 7)],
+                         [['scene:extra1', 0], ['scene:extra2', 0], ['scene:extra3', 0], ['scene:extra4', 0]])
+        self.assertEqual(additional['scene:extra1'][0], style.resolve())  # shortcut comes first
+        self.assertEqual(additional['scene:extra4'][0], pose.resolve())
+        self.assertIn('From reference image 4, take only: the hairpin design.', prompt)
+        self.assertIn('From reference image 6, take only: the standing pose with the right side of the face visible.', prompt)
+        self.assertNotIn('only for body pose', prompt)
+        self.assertEqual([(d['slot'], d['use']) for d in metadata['extra_references']],
+                         [(3, 'the illustration style only (linework, coloring, shading and rendering)'),
+                          (4, 'the hairpin design'), (5, 'the hairstyle shape only'),
+                          (6, 'the standing pose with the right side of the face visible')])
+        self.assertIsNone(metadata['pose_image'])
+        self.assertEqual(metadata['reference_limits'], {'max_official_references': 4, 'max_total_references': 8})
+
+    def test_no_extra_images_means_no_extra_instructions(self):
+        _, _, _, additional, prompt, metadata = prepare_scene(self.profile, self.root, 'Scene')
+        self.assertEqual(additional, {})
+        self.assertNotIn('take only', prompt)
+        self.assertEqual(metadata['extra_references'], [])
+
+    def test_total_limit_fails_before_backend_and_config_can_raise_it(self):
+        extra = self.root / 'detail.png'; extra.write_bytes(self.data)
+        details = [{'image': str(extra), 'use': f'detail {i}'} for i in range(8)]
+        with self.assertRaisesRegex(ComfyError, 'max_total_references is 8'):
+            prepare_scene(self.profile, self.root, 'Scene', extra_references=details)
+        graph, *_ = prepare_scene(self.profile, self.root, 'Scene', extra_references=details,
+                                  limits={'max_total_references': 9})
+        self.assertEqual(sum(f.startswith('images.') for f in graph['459:474']['inputs']), 9)
+        for version in range(2, 4):
+            self.add_official(version)
+        graph, *_ = prepare_scene(self.profile, self.root, 'Scene', limits={'max_official_references': 2})
+        self.assertNotIn('scene:reference3', graph)
+
+    def test_invalid_limits_and_detail_shapes_fail_closed(self):
+        for limits in ({'max_total_references': 17}, {'max_total_references': 0}, {'max_total_references': True},
+                       {'max_official_references': 5, 'max_total_references': 4}, {'unknown': 3}, ['bad']):
+            with self.subTest(limits=limits), self.assertRaises(ComfyError):
+                prepare_scene(self.profile, self.root, 'Scene', limits=limits)
+        pin = self.root / 'pin.png'; pin.write_bytes(self.data)
+        for details in ('pin.png', [{'image': str(pin)}], [{'image': str(pin), 'use': ' '}],
+                        [{'image': str(pin), 'use': 'x' * 201}], [{'image': str(pin), 'use': 'pin', 'extra': 1}],
+                        [{'image': str(self.root / 'missing.png'), 'use': 'pin'}]):
+            with self.subTest(details=details), self.assertRaises(ComfyError):
+                prepare_scene(self.profile, self.root, 'Scene', extra_references=details)
+
+    def test_adapter_passes_config_limits_and_details(self):
+        config = {'base_url': 'http://127.0.0.1:8188', 'output_dir': str(self.root),
+                  'references': {'max_total_references': 12}}
+        store = Mock(); store.get.return_value = self.profile
+        details = [{'image': 'pin.png', 'use': 'hairpin design'}]
+        with patch.object(mcp_server.Path, 'read_text', return_value=json.dumps(config)), patch.object(mcp_server, 'character_store', return_value=store), patch.object(mcp_server, 'prepare_scene', return_value='prepared') as prepare, patch.object(mcp_server, 'ensure_backend'), patch.object(mcp_server, 'create_scene', return_value={'ok': True}):
+            mcp_server.create_character_scene_sync('alias', 'Scene', None, None, None, details)
+        self.assertEqual(prepare.call_args.args[5:], (details, {'max_total_references': 12}))
+
+    def test_extra_views_are_uploaded_once_each_in_one_submission(self):
+        self.add_official(2)
+        prepared = prepare_scene(self.profile, self.root, 'Scene')
+        client = Mock()
+        client.upload_image.side_effect = ['v1-upload.png', 'v2-upload.png']
+        client.request.return_value = {'prompt_id': 'pending'}
+        client.wait.side_effect = ComfyError('timeout pending')
+        with self.assertRaises(ComfyError):
+            create_scene(client, prepared, self.root, 10, 1, 'example-id')
+        self.assertEqual(client.upload_image.call_count, 2)
+        client.request.assert_called_once()
+        sent = client.request.call_args.args[1]['prompt']
+        self.assertEqual(sent['470']['inputs']['image'], 'v1-upload.png')
+        self.assertEqual(sent['scene:reference2']['inputs']['image'], 'v2-upload.png')
 
     def test_single_submission_and_png_json_provenance(self):
         prepared = prepare_scene(self.profile, self.root, 'A calm woman seated on a terrace')
@@ -152,7 +288,7 @@ class SceneTests(unittest.TestCase):
         self.assertEqual(client.upload_image.call_args.kwargs['image_bytes'], self.data)
         sent = client.request.call_args.args[1]['prompt']
         self.assertEqual(sent['470']['inputs']['image'], 'official-upload.png')
-        self.assertEqual(sent['scene:pose']['inputs']['image'], 'pose-upload.png')
+        self.assertEqual(sent['scene:extra1']['inputs']['image'], 'pose-upload.png')
 
     def test_missing_qwen_model_never_uploads_or_submits(self):
         prepared = prepare_scene(self.profile, self.root, 'Scene')

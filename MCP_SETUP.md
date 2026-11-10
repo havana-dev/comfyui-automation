@@ -120,7 +120,7 @@ comfyui_status와 CLI check는 Qwen T2I 노드와 모델을 검사합니다.
 
 | edit_image | reference_image/instruction/character/seed/style_reference_image | Qwen 편집. 스타일 참조는 선택적이며 명시된 경우만 사용 |
 | create_character_draft | character_settings, prompt, seed 선택 | Qwen T2I 승인 대기 초안. 자동 등록 없음 |
-| create_character_scene | character, scene_description, seed/pose_image 선택 | 공식 reference_v1.png를 검증하여 Qwen 새 장면 생성 |
+| create_character_scene | character, scene_description, seed/extra_references(이미지별로 가져올 것을 적은 목록)/pose_image·style_reference_image(바로가기) 선택 | 공식 reference_v1.png(필수)와 등록된 reference_v2.png…를 검증하여 Qwen 새 장면 생성. 장수 제한은 config.json references (기본 공식 4장, 전체 8장, 최대 16장) |
 | get_character | name | 설정과 참조 경로 조회 |
 | save_character | name 및 선택 설정 | 명시적으로 제공한 설정만 저장 |
 
