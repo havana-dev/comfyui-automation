@@ -135,16 +135,11 @@ comfyui_status와 CLI check는 Qwen T2I 노드와 모델을 검사합니다.
 
 ## 설치 및 도구 목록 확인 (이미지 생성 없음)
 
-일반 Windows PowerShell에서:
+전용 가상환경 준비, SDK 설치, tools/list 확인은 `install.cmd`(`setup.ps1`)가 함께 수행합니다.
+이미 가상환경이 있으면 재사용하며, ComfyUI가 꺼져 있어도 목록 조회는 가능합니다.
+설치 후 변경 없이 다시 확인만 하려면 `setup.ps1 -CheckOnly`를 사용합니다.
 
-```powershell
-cd <프로젝트 폴더>
-.\setup_mcp.ps1
-```
-
-setup_mcp.ps1은 전용 가상환경 준비, SDK 설치, tools/list 확인만 수행합니다. 이미 가상환경이 있으면 재사용합니다. ComfyUI가 꺼져 있어도 목록 조회는 가능합니다.
-
-PowerShell 실행 정책 때문에 ps1이 막히면 정책 변경 없이 아래 Python 명령을 사용합니다. 가상환경은 현재 프로젝트에 이미 생성돼 있습니다:
+`install.cmd`로 `.venv-mcp`를 만든 뒤에는 아래 Python 명령으로 같은 작업을 직접 실행할 수도 있습니다:
 
 ```powershell
 .\.venv-mcp\Scripts\python.exe -B -m ensurepip --upgrade

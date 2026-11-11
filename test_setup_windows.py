@@ -479,7 +479,8 @@ class InstallerTests(unittest.TestCase):
         # A junction (no admin rights needed) stands in for Desktop's bundled Python 3.13.
         subprocess.run(["cmd", "/c", "mklink", "/J", str(environment), sys.base_prefix], check=True, capture_output=True)
         self.addCleanup(os.rmdir, environment)
-        self.desktop_list([{"status": "installed", "installPath": str(install)}])
+        self.desktop_list([{"status": "installed", "name": "Comfy Cloud", "remoteUrl": "https://cloud.comfy.org/"},
+                           {"status": "installed", "installPath": str(install)}])
         shutil.copyfile(SOURCE / "setup.ps1", self.root / "setup.ps1")
         (self.root / "setup_windows.py").write_text("import sys\nprint('PY=' + sys.executable)\n", encoding="utf-8")
         trap = self.root / "launcher.ps1"
@@ -498,6 +499,54 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", "replace"))
         # The launcher stub may be listed as a later candidate; Desktop's Python must be selected first.
         self.assertIn(str(environment / "python.exe"), result.stdout.decode("utf-8"))
+
+    def junction_to_python(self, link):
+        """A directory junction (no admin rights needed) whose python.exe is a real Python 3.13."""
+        link.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["cmd", "/c", "mklink", "/J", str(link), sys.base_prefix], check=True, capture_output=True)
+        self.addCleanup(os.rmdir, link)  # Remove the link itself before the temporary tree is deleted.
+        return link / "python.exe"
+
+    def run_cli_wrapper(self, *args):
+        shutil.copyfile(SOURCE / "run.ps1", self.root / "run.ps1")
+        (self.root / "comfy_client.py").write_text("import sys\nprint('PY=' + sys.executable)\nprint('ARGS=' + '|'.join(sys.argv[1:]))\nsys.exit(3)\n", encoding="utf-8")
+        return subprocess.run(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(self.root / "run.ps1"), *args],
+                              capture_output=True, timeout=60, env={**os.environ, "APPDATA": str(self.home), "PYTHONUTF8": "1"})
+
+    def test_run_ps1_has_no_machine_specific_path(self):
+        content = (SOURCE / "run.ps1").read_text(encoding="utf-8-sig")
+        self.assertNotRegex(content, r"[A-Za-z]:\\")
+        self.assertFalse((SOURCE / "setup_mcp.ps1").exists())
+
+    @unittest.skipUnless(os.name == "nt", "Windows CLI wrapper")
+    def test_run_ps1_without_any_python_explains_install_and_fails(self):
+        result = self.run_cli_wrapper("check")
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("install.cmd", (result.stdout + result.stderr).decode("utf-8", "replace"))
+        self.assertNotIn(b"PY=", result.stdout)
+
+    @unittest.skipUnless(os.name == "nt", "Windows CLI wrapper")
+    def test_run_ps1_uses_desktop_python_and_forwards_arguments(self):
+        install = self.home / "Desktop 설치"
+        desktop_python = self.junction_to_python(install / "standalone-env")
+        # Real Desktop lists hold several entries (e.g. a Comfy Cloud entry without installPath).
+        self.desktop_list([{"status": "installed", "installPath": str(install)},
+                           {"status": "installed", "name": "Comfy Cloud", "remoteUrl": "https://cloud.comfy.org/"}])
+        result = self.run_cli_wrapper("generate", "--prompt", "a cozy 서재", "--seed", "42")
+        output = result.stdout.decode("utf-8")
+        self.assertEqual(result.returncode, 3, result.stderr)
+        self.assertIn("PY=" + str(desktop_python), output)
+        self.assertIn("ARGS=generate|--prompt|a cozy 서재|--seed|42", output)
+
+    @unittest.skipUnless(os.name == "nt", "Windows CLI wrapper")
+    def test_run_ps1_prefers_installed_venv_over_desktop_python(self):
+        install = self.home / "Desktop 설치"
+        self.junction_to_python(install / "standalone-env")
+        self.desktop_list([{"status": "installed", "installPath": str(install)}])
+        venv_python = self.junction_to_python(self.root / ".venv-mcp" / "Scripts")
+        result = self.run_cli_wrapper("check")
+        self.assertEqual(result.returncode, 3, result.stderr)
+        self.assertIn("PY=" + str(venv_python), result.stdout.decode("utf-8"))
 
     def test_install_cmd_is_ascii_crlf_and_calls_setup_from_its_folder(self):
         content = (SOURCE / "install.cmd").read_bytes()

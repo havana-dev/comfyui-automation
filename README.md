@@ -51,7 +51,7 @@ Python 표준 라이브러리로 로컬 ComfyUI API를 호출합니다. pip 설�
 | result_store.py | 출력 하위 경로 검증, 생성 메타데이터 JSON 저장 |
 | config.json | 서버 주소, 출력 경로, 워크플로, 대기 제한 |
 | workflows/qwen21_text_to_image_api.json | 설치된 공식 템플릿의 노드/설정을 수동으로 API 형식으로 변환 |
-| run.ps1 | 기존 Desktop Python으로 실행 |
+| run.ps1 | CLI 실행. `install.cmd`가 만든 `.venv-mcp`의 Python을, 없으면 ComfyUI Desktop에 포함된 Python을 사용 |
 | test_client.py | 서버 없이 요청 구성·오류·저장 동작 검증 |
 
 일반 생성은 초안 도구의 검증된 Qwen T2I 그래프 준비 함수를 재사용합니다. 샘플 프롬프트,
@@ -65,7 +65,7 @@ Python 표준 라이브러리로 로컬 ComfyUI API를 호출합니다. pip 설�
 
 ## 실행
 
-ComfyUI Desktop을 켠 상태에서 Windows PowerShell을 열고:
+`install.cmd`로 설치를 마치고 ComfyUI Desktop을 켠 상태에서 Windows PowerShell을 열고:
 
 ```powershell
 cd <프로젝트 폴더>
