@@ -12,28 +12,29 @@
 | 항목 | 내용 |
 |---|---|
 | 운영체제 | Windows (자동 설치기 `setup.ps1`이 Windows용입니다) |
-| 프로그램 | ComfyUI Desktop(로컬 실행), Python 3.13, Claude Desktop 또는 Claude Code |
+| 프로그램 | ComfyUI Desktop(로컬 실행), Claude Desktop 또는 Claude Code. Python 3.13은 ComfyUI Desktop에 들어 있는 것을 자동으로 사용합니다 |
 | 모델 | Qwen Image 2.1 모델 3개. 자동으로 받지 않으니 직접 설치해야 합니다 (아래 안내 참고) |
 | 그래픽카드 | 참조 이미지 장수 기본값은 VRAM 16GB 기준입니다. 사양에 맞게 `config.json`에서 조절하세요 |
 
 ## 빠른 시작
 
-1. 이 저장소를 ZIP으로 받아 모두 압축 해제합니다.
-2. 압축 푼 폴더에서 PowerShell을 열고 아래 한 줄을 실행합니다.
+1. ComfyUI Desktop을 설치하고 한 번 실행해 둡니다.
+2. 이 저장소를 ZIP으로 받아 모두 압축 해제합니다.
+3. 압축 푼 폴더의 **`install.cmd`를 더블클릭**합니다. Windows 보안 경고가 뜨면 내용을 확인한 뒤 실행을 허용하세요.
+4. 설치 대상(Claude Desktop / Claude Code / 둘 다)을 고르고, 나머지 질문은 기본값이면 Enter를 누릅니다.
+   ComfyUI Desktop 설치 폴더와 Python은 자동으로 찾습니다.
+5. Claude Desktop을 완전히 종료했다가 다시 실행합니다.
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1
-```
-
-3. 화면 질문에 답하고, Claude Desktop을 완전히 종료했다가 다시 실행합니다.
+PowerShell에서 직접 실행하려면 `powershell -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1`을 사용해도 같습니다.
 
 사진이 있는 단계별 설명은 저장소의 PDF 가이드(`claude_comfyui_qwen_guide_v9.pdf`)를, 자세한 옵션은 [MCP_SETUP.md](MCP_SETUP.md)를 참고하세요.
 
 ## 상세 설명
 
 Windows ZIP 배포의 간편 설치는 **[MCP_SETUP.md의 간편 설치 v1](MCP_SETUP.md#간편-설치-v1-windows-zip)**을 참고하세요.
-압축을 푼 폴더에서 `powershell -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1`을 실행하면
-Claude Desktop / Claude Code / 둘 다를 선택할 수 있습니다. Python 3.13과 실행 중인 로컬 ComfyUI가 필요합니다.
+압축을 푼 폴더에서 `install.cmd`를 더블클릭하거나 `powershell -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1`을 실행하면
+Claude Desktop / Claude Code / 둘 다를 선택할 수 있습니다. 실행 중인 로컬 ComfyUI가 필요하며,
+Python 3.13은 ComfyUI Desktop에 포함된 것을 먼저 찾고 없으면 별도 설치된 Python 3.13을 찾습니다.
 
 Python 표준 라이브러리로 로컬 ComfyUI API를 호출합니다. pip 설치가 필요 없으며 ComfyUI 설치/모델/원본 소스를 변경하지 않습니다.
 
@@ -45,6 +46,7 @@ Python 표준 라이브러리로 로컬 ComfyUI API를 호출합니다. pip 설�
 
 | 파일 | 역할 |
 |---|---|
+| install.cmd | 더블클릭 설치. `setup.ps1`을 실행하고 결과 창을 유지 |
 | comfy_client.py | API 확인, 모델/노드 목록 검증, 생성 요청, 완료 대기, PNG 다운로드 |
 | result_store.py | 출력 하위 경로 검증, 생성 메타데이터 JSON 저장 |
 | config.json | 서버 주소, 출력 경로, 워크플로, 대기 제한 |

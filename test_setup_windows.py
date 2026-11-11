@@ -395,6 +395,7 @@ class InstallerTests(unittest.TestCase):
         wrapper = self.root / "probe.ps1"
         wrapper.write_text(
             f"$env:LOCALAPPDATA = {quote(self.home)}\n"
+            f"$env:APPDATA = {quote(self.home)}\n"
             "function Get-Command { param($Name, $ErrorAction)\n"
             f"if ($Name -eq 'py.exe') {{ [pscustomobject]@{{Source={quote(trap)}}} }}\n"
             "}\n"
@@ -423,6 +424,100 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(b"BOOTSTRAP_OK", result.stdout)
         self.assertIn("한글 안내", result.stdout.decode("utf-8"))
+
+    def desktop_list(self, entries):
+        path = self.home / "Comfy Desktop" / "installations.json"
+        return path, self.put(path, entries)
+
+    def comfy_install(self, name):
+        folder = self.home / name
+        (folder / "ComfyUI").mkdir(parents=True)
+        (folder / "ComfyUI" / "main.py").touch()
+        return folder
+
+    def test_desktop_installs_reads_only_installed_comfyui_folders(self):
+        good = self.comfy_install("설치 A")
+        no_main = self.home / "main.py 없음"
+        no_main.mkdir()
+        path, original = self.desktop_list([
+            {"status": "installed", "installPath": str(good)},
+            {"status": "installed", "installPath": str(no_main)},
+            {"status": "installing", "installPath": str(good)},
+            {"status": "installed", "name": "Comfy Cloud", "remoteUrl": "https://cloud.comfy.org/"},
+            "unexpected"])
+        self.assertEqual(setup.desktop_installs(str(self.home)), [good])
+        self.assertEqual(path.read_bytes(), original)
+
+    def test_desktop_installs_missing_or_invalid_list_is_empty(self):
+        self.assertEqual(setup.desktop_installs(str(self.home)), [])
+        self.assertEqual(setup.desktop_installs(""), [])
+        for content in ("{not json", '{"installPath": "C:/x"}'):
+            with self.subTest(content=content):
+                path = self.home / "Comfy Desktop" / "installations.json"
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(content, encoding="utf-8")
+                self.assertEqual(setup.desktop_installs(str(self.home)), [])
+
+    def test_config_folder_defaults_to_detected_desktop_install(self):
+        install = self.comfy_install("Desktop 설치")
+        self.desktop_list([{"status": "installed", "installPath": str(install)}])
+        prompts = []
+        answers = iter(["", "", str(self.root / "결과"), "y"])
+        def answer(prompt):
+            prompts.append(prompt)
+            return next(answers)
+        config = setup.prepare_config(self.root, answer, appdata=str(self.home))
+        self.assertEqual(config["backend"]["base_dir"], str(install.resolve()))
+        self.assertIn(str(install), prompts[0])
+        self.assertIn("Enter", self.output.getvalue())
+
+    @unittest.skipUnless(os.name == "nt", "Windows ComfyUI Desktop Python discovery")
+    def test_powershell_prefers_comfyui_desktop_python_over_launcher(self):
+        install = self.home / "Desktop 설치"
+        install.mkdir()
+        environment = install / "standalone-env"
+        # A junction (no admin rights needed) stands in for Desktop's bundled Python 3.13.
+        subprocess.run(["cmd", "/c", "mklink", "/J", str(environment), sys.base_prefix], check=True, capture_output=True)
+        self.addCleanup(os.rmdir, environment)
+        self.desktop_list([{"status": "installed", "installPath": str(install)}])
+        shutil.copyfile(SOURCE / "setup.ps1", self.root / "setup.ps1")
+        (self.root / "setup_windows.py").write_text("import sys\nprint('PY=' + sys.executable)\n", encoding="utf-8")
+        trap = self.root / "launcher.ps1"
+        sentinel = self.root / "launcher-invoked.txt"
+        quote = lambda path: "'" + str(path).replace("'", "''") + "'"
+        trap.write_text(f"Set-Content -LiteralPath {quote(sentinel)} -Value invoked\n", encoding="utf-8-sig")
+        wrapper = self.root / "probe.ps1"
+        wrapper.write_text(
+            f"$env:LOCALAPPDATA = {quote(self.home)}\n"
+            f"$env:APPDATA = {quote(self.home)}\n"
+            "function Get-Command { param($Name, $ErrorAction)\n"
+            f"if ($Name -eq 'py.exe') {{ [pscustomobject]@{{Source={quote(trap)}}} }}\n"
+            "}\n"
+            f"& {quote(self.root / 'setup.ps1')}\nexit $LASTEXITCODE\n", encoding="utf-8-sig")
+        result = subprocess.run(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(wrapper)], capture_output=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", "replace"))
+        # The launcher stub may be listed as a later candidate; Desktop's Python must be selected first.
+        self.assertIn(str(environment / "python.exe"), result.stdout.decode("utf-8"))
+
+    def test_install_cmd_is_ascii_crlf_and_calls_setup_from_its_folder(self):
+        content = (SOURCE / "install.cmd").read_bytes()
+        content.decode("ascii")
+        self.assertNotIn(b"\n", content.replace(b"\r\n", b""))
+        self.assertIn(b'-File "%~dp0setup.ps1" %*', content)
+        self.assertIn(b"exit /b %SETUP_EXIT%", content)
+
+    @unittest.skipUnless(os.name == "nt", "Windows double-click wrapper")
+    def test_install_cmd_forwards_arguments_and_exit_status(self):
+        for name in ("install.cmd", "setup.ps1"):
+            shutil.copyfile(SOURCE / name, self.root / name)
+        (self.root / "setup_windows.py").write_text('import sys\nassert sys.argv[1:] == ["--diagnose"]\nprint("READ_ONLY")\nsys.exit(1)\n', encoding="utf-8")
+        before = self.tree_snapshot()
+        # Run from another directory: the wrapper must locate setup.ps1 next to itself.
+        result = subprocess.run(["cmd", "/c", str(self.root / "install.cmd"), "-CheckOnly", "-PythonPath", sys.executable],
+                                cwd=self.home, input=b"\r\n", capture_output=True, timeout=60)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn(b"READ_ONLY", result.stdout)
+        self.assertEqual(self.tree_snapshot(), before)
 
 
 class ExternalBackendTests(unittest.TestCase):

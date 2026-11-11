@@ -5,18 +5,24 @@
 ### 준비와 실행
 
 1. GitHub ZIP을 **모두 압축 해제**하고 계속 사용할 쓰기 가능한 폴더에 둡니다. Git은 필요 없습니다.
-2. [Python 3.13](https://www.python.org/downloads/windows/)을 설치합니다. 설치기의 기본 Python Launcher도 함께 설치하면 자동 탐색이 쉽습니다.
+2. [ComfyUI Desktop](https://docs.comfy.org/installation/desktop/windows)에서 로컬 인스턴스를 실행하고 API 주소/포트를 확인합니다. MCP에 PyTorch·CUDA를 설치할 필요는 없습니다.
 3. Claude Desktop은 설치 후 한 번 실행합니다. Claude Code를 선택한다면 [Windows 네이티브 Claude Code](https://code.claude.com/docs/en/setup)를 설치하고 `claude` 명령을 사용할 수 있어야 합니다. npm의 `.cmd` 실행기는 v1에서 자동 등록하지 않습니다.
-4. [ComfyUI Desktop](https://docs.comfy.org/installation/desktop/windows)에서 로컬 인스턴스를 실행하고 설치 폴더와 API 주소/포트를 확인합니다. MCP에 PyTorch·CUDA를 설치할 필요는 없습니다.
-5. 압축을 푼 프로젝트 폴더에서 PowerShell을 열고 다음 **한 명령**을 실행합니다.
+4. 압축을 푼 프로젝트 폴더의 **`install.cmd`를 더블클릭**합니다. PowerShell에서 직접 실행하려면 다음 한 명령과 같습니다.
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1
 ```
 
+`install.cmd`는 같은 폴더의 `setup.ps1`을 실행하고, 결과를 읽을 수 있도록 창을 멈춰 둡니다.
 실행 정책은 이 PowerShell 프로세스에만 적용하며 시스템 정책·PATH·Git 설정은 변경하지 않습니다.
-조직 정책으로 실행이 금지되어 있다면 관리자에게 문의하세요. Python 자동 탐색이 실패하면
-`setup.ps1 -PythonPath 'C:\실제경로\python.exe'`로 3.13 실행 파일을 지정할 수 있습니다.
+조직 정책으로 실행이 금지되어 있다면 관리자에게 문의하세요.
+
+Python 3.13은 다음 순서로 찾습니다: `-PythonPath`로 지정한 경로 → 기존 `.venv-mcp` →
+ComfyUI Desktop에 포함된 Python(`%APPDATA%\Comfy Desktop\installations.json`의 설치 폴더 아래 `standalone-env\python.exe`) →
+Python Launcher(`py -3.13`) → PATH의 `python.exe` → 기본 설치 경로. ComfyUI Desktop을 쓰면 Python을 따로 설치할 필요가 없습니다.
+그래도 찾지 못하면 [Python 3.13](https://www.python.org/downloads/windows/)을 설치하거나
+`setup.ps1 -PythonPath 'C:\실제경로\python.exe'`로 3.13 실행 파일을 지정하세요.
+ComfyUI 폴더 질문의 기본값도 같은 Desktop 설치 목록에서 채웁니다. 설치 목록은 읽기만 하며 변경하지 않습니다.
 
 설치하지 않고 기존 환경만 읽기 전용으로 진단하려면 다음 명령을 사용합니다.
 

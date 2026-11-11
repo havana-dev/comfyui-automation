@@ -250,7 +250,26 @@ def confirm(prompt, input_fn=input):
     return ask(prompt + " (y/N)", input_fn=input_fn).lower() in ("y", "yes", "예", "네")
 
 
-def prepare_config(root, input_fn=input):
+def desktop_installs(appdata=None):
+    """Read-only lookup of ComfyUI Desktop's own install list; missing or invalid -> []."""
+    base = os.environ.get("APPDATA") if appdata is None else appdata
+    if not base:
+        return []
+    try:
+        items = json.loads((Path(base) / "Comfy Desktop" / "installations.json").read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError, UnicodeError):
+        return []
+    found = []
+    for item in items if isinstance(items, list) else []:
+        location = item.get("installPath") if isinstance(item, dict) and item.get("status") == "installed" else None
+        if isinstance(location, str) and location.strip():
+            folder = Path(location)
+            if (folder / "main.py").is_file() or (folder / "ComfyUI" / "main.py").is_file():
+                found.append(folder)
+    return found
+
+
+def prepare_config(root, input_fn=input, appdata=None):
     path = root / "config.json"
     if path.exists():
         config = read_json(path)
@@ -262,8 +281,12 @@ def prepare_config(root, input_fn=input):
         print("기존 config.json을 그대로 사용합니다 (변경 없음).")
         return config
     print(f"ComfyUI Desktop이 없다면 먼저 설치하세요: {DESKTOP_GUIDE}")
-    print("Desktop에서 선택한 로컬 설치/인스턴스 폴더를 입력하세요. ComfyUI 또는 main.py가 있는 폴더입니다.")
-    instance = Path(ask("ComfyUI 폴더", input_fn=input_fn).strip('"')).expanduser()
+    detected = desktop_installs(appdata)
+    if detected:
+        print(f"ComfyUI Desktop 설치 폴더를 찾았습니다. 그대로 쓰려면 Enter를 누르세요: {detected[0]}")
+    else:
+        print("Desktop에서 선택한 로컬 설치/인스턴스 폴더를 입력하세요. ComfyUI 또는 main.py가 있는 폴더입니다.")
+    instance = Path(ask("ComfyUI 폴더", str(detected[0]) if detected else "", input_fn).strip('"')).expanduser()
     if not ((instance / "main.py").is_file() or (instance / "ComfyUI" / "main.py").is_file()):
         raise SetupError("ComfyUI/main.py 또는 main.py를 찾지 못했습니다. Desktop에서 실제 설치 폴더를 확인하세요.")
     instance = instance.resolve()
