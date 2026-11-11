@@ -128,6 +128,9 @@ MCP 서버는 comfyui_status와 generate_image 도구를 제공합니다. 기존
 
 `/system_stats` 준비 확인 후 기존 워크플로/모델 검증과 생성 함수를 호출합니다. 준비 대기는 180초(진행 중 HTTP 요청은 최대 30초 추가)이며 실패 시 이미지를 제출하지 않습니다. 로그는 프로젝트 `backend.log`에 누적됩니다. 상태 도구도 서버 시작과 로그 쓰기를 할 수 있습니다. 종료나 시간 초과로 백엔드를 강제 종료하지 않습니다.
 
+`install.cmd`로 새 config.json을 만들 때 ComfyUI Desktop의 설치 목록·설정·모델 경로 파일에서 이 값을 모두 찾으면
+"ComfyUI 백그라운드 자동 시작을 사용할까요?"를 묻고, y를 고르면 아래 값을 채우고 MCP 등록에 `COMFYUI_MCP_AUTO_START=1`을 지정합니다.
+기본값(N)은 자동 시작을 끄고 실행 중인 ComfyUI Desktop에만 연결합니다.
 자동 실행 경로는 Git에서 제외된 config.json의 backend에 base_dir, models_config, input_dir, output_dir로 설정합니다. base_dir 아래 ComfyUI/.venv/Scripts/python.exe와 ComfyUI/main.py를 사용합니다. 재설치나 다운로드는 하지 않습니다. 동일 MCP 프로세스의 시작은 직렬화되지만 독립 프로세스끼리는 시작 경쟁이 가능하므로 MCP 서버는 하나만 등록하세요.
 
 ## TRPG 캐릭터 기억

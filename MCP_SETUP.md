@@ -61,8 +61,14 @@ Python 보조 파일은 `--diagnose`, `--help`/`-h`를 지원합니다.
 - 동일 설정으로 재실행하면 등록 파일과 백업을 추가 변경하지 않습니다. 같은 이름이 다른 경로·환경을 가리키면
   덮어쓰지 않고 해당 앱 등록만 실패로 표시합니다. JSON 형식 오류도 원본을 보존한 채 중단합니다.
   CLI 실패 시 백업 경로를 표시하며, 동시에 발생한 다른 변경을 덮어쓸 수 있는 자동 복원은 하지 않습니다.
-- 새 등록 항목에 `COMFYUI_MCP_AUTO_START=0`을 지정하여 **이미 실행 중인 로컬 API에만 연결**합니다.
+- 기본값은 새 등록 항목에 `COMFYUI_MCP_AUTO_START=0`을 지정하여 **이미 실행 중인 로컬 API에만 연결**합니다.
   기존 config와 다른 클라이언트의 8188 자동 시작은 그대로 유지됩니다.
+- 새 config.json을 만들 때 ComfyUI Desktop의 `installations.json`·`settings.json`·`instance-model-paths\<ID>.yaml`과
+  `ComfyUI\.venv\Scripts\python.exe`·`ComfyUI\main.py`가 모두 있고 API 포트가 8188이면 **백그라운드 자동 시작**을 묻습니다.
+  y를 고르면 그 경로로 `backend`를 채우고(`auto_start: true`) 등록 항목에 `COMFYUI_MCP_AUTO_START=1`을 지정합니다.
+  Desktop 파일은 읽기만 합니다.
+- 이미 등록된 `comfyui-local`과 자동 시작 값이 다르면 기존 등록을 보존하고 실패로 보고합니다.
+  바꾸려면 `claude mcp remove comfyui-local`(Claude Code) 또는 Desktop 설정의 해당 항목을 정리하고, config.json을 지운 뒤 다시 설치하세요.
   수동 설정의 `backend.auto_start=false`도 지원하며, 옵션/환경변수가 없으면 기존 자동 시작이 기본입니다.
   환경변수는 `0` / `1`만 지원하고 config보다 우선합니다.
 - ComfyUI 진단은 GET `/system_stats`, `/object_info`만 사용합니다. 백엔드 실행·모델 설치·업로드·이미지 생성은 하지 않습니다.

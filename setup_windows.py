@@ -8,6 +8,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
@@ -82,9 +83,10 @@ def write_json(path, data, original):
         Path(temporary).unlink(missing_ok=True)  # Only our newly-created temporary file.
 
 
-def launcher(root, python):
+def launcher(root, python, auto_start=False):
+    # The environment value overrides config.json in mcp_server, so it must follow the installer's choice.
     return {"command": str(python), "args": ["-B", "-u", str(root / "mcp_server.py")],
-            "env": {"PYTHONUTF8": "1", "PYTHONDONTWRITEBYTECODE": "1", "COMFYUI_MCP_AUTO_START": "0"}}
+            "env": {"PYTHONUTF8": "1", "PYTHONDONTWRITEBYTECODE": "1", "COMFYUI_MCP_AUTO_START": "1" if auto_start else "0"}}
 
 
 def matches(existing, desired):
@@ -194,7 +196,7 @@ def register_code(root, config_path, entry, scope="local", *, cli=None, runner=r
     try:
         # --env is variadic: an option must separate its values from the server name.
         runner([cli, "mcp", "add", "--scope", scope,
-                "--env", "PYTHONUTF8=1", "PYTHONDONTWRITEBYTECODE=1", "COMFYUI_MCP_AUTO_START=0",
+                "--env", *(f"{key}={value}" for key, value in entry["env"].items()),
                 "--transport", "stdio", NAME, "--", entry["command"], *entry["args"]], cwd=root)
         after = read_json(config_path)
         selected = local_project(after, root) if scope == "local" else after
@@ -294,6 +296,43 @@ def desktop_installs(appdata=None):
     return found
 
 
+def desktop_backend(appdata=None):
+    """Background-start settings read from ComfyUI Desktop's own files; None unless every path exists.
+
+    Only reads Desktop's install list, settings and generated model-path file. mcp_server.ensure_backend
+    starts <base_dir>/ComfyUI/main.py with <base_dir>/ComfyUI/.venv Python using these values.
+    """
+    base = os.environ.get("APPDATA") if appdata is None else appdata
+    if not base:
+        return None
+    desktop = Path(base) / "Comfy Desktop"
+    try:
+        items = json.loads((desktop / "installations.json").read_text(encoding="utf-8-sig"))
+        settings = json.loads((desktop / "settings.json").read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError, UnicodeError):
+        return None
+    if not isinstance(items, list) or not isinstance(settings, dict):
+        return None
+    for item in items:
+        if not (isinstance(item, dict) and item.get("status") == "installed"):
+            continue
+        identifier, location = item.get("id"), item.get("installPath")
+        # The id becomes a file name; accept only plain names, never a path.
+        if not (isinstance(identifier, str) and re.fullmatch(r"[A-Za-z0-9_.-]+", identifier)
+                and isinstance(location, str) and location.strip()):
+            continue
+        folder = Path(location)
+        backend = {"auto_start": True, "base_dir": str(folder),
+                   "models_config": str(desktop / "instance-model-paths" / f"{identifier}.yaml"),
+                   "input_dir": settings.get("inputDir"), "output_dir": settings.get("outputDir")}
+        files = (folder / "ComfyUI" / ".venv" / "Scripts" / "python.exe", folder / "ComfyUI" / "main.py",
+                 Path(backend["models_config"]))
+        folders = (backend["input_dir"], backend["output_dir"])
+        if all(path.is_file() for path in files) and all(isinstance(value, str) and value.strip() and Path(value).is_dir() for value in folders):
+            return backend
+    return None
+
+
 def prepare_config(root, input_fn=input, appdata=None):
     path = root / "config.json"
     if path.exists():
@@ -319,12 +358,20 @@ def prepare_config(root, input_fn=input, appdata=None):
     output = Path(ask("이미지 결과를 보관할 폴더", str(root / "outputs"), input_fn).strip('"')).expanduser().resolve()
     if output.exists() and not output.is_dir():
         raise SetupError("출력 경로가 폴더가 아닙니다. 다른 경로를 선택하세요.")
-    print(f"ComfyUI 폴더: {instance}\nAPI: {url}\n결과 저장: {output}\nComfyUI 자동 시작: 사용 안 함")
+    backend = {"auto_start": False, "base_dir": str(instance)}
+    candidate = desktop_backend(appdata)
+    # Background start reuses Desktop's own files and always listens on 8188 (see mcp_server.ensure_backend).
+    if candidate and Path(candidate["base_dir"]).resolve() == instance and urlsplit(url).port == 8188:
+        print("ComfyUI Desktop을 켜 두지 않아도, 이미지 요청 때 ComfyUI가 꺼져 있으면 창 없이 자동으로 실행할 수 있습니다.")
+        if confirm("ComfyUI 백그라운드 자동 시작을 사용할까요?", input_fn):
+            backend = candidate
+    automatic = "사용 (8188 포트가 비어 있을 때 창 없이 실행)" if backend["auto_start"] else "사용 안 함 (ComfyUI Desktop을 직접 실행)"
+    print(f"ComfyUI 폴더: {instance}\nAPI: {url}\n결과 저장: {output}\nComfyUI 자동 시작: {automatic}")
     if not confirm("이 경로로 새 config.json을 만들까요?", input_fn):
         raise SetupError("경로 설정을 취소했습니다. config.json을 만들지 않았습니다.")
     config = read_json(root / "config.example.json")
     config.update(base_url=url, output_dir=str(output))
-    config["backend"] = {"auto_start": False, "base_dir": str(instance)}
+    config["backend"] = backend
     write_json(path, config, None)
     return config
 
@@ -435,7 +482,7 @@ def main():
     print(f"MCP 도구 목록: {len(listed['tools'])}개 확인")
     # API graph checks use only stdlib; MCP was independently checked above.
     diagnosis = diagnose(root, config)
-    entry = launcher(root, python)
+    entry = launcher(root, python, config.get("backend", {}).get("auto_start") is True)
     outcomes = {}
     if target in ("1", "3"):
         paths = desktop_config_paths()

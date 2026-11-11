@@ -480,6 +480,75 @@ class InstallerTests(unittest.TestCase):
         self.assertIn("Claude Desktop MCP 등록: 실패", self.output.getvalue())
         self.assertFalse(self.desktop.exists())
 
+    def full_comfy_desktop(self, identifier="inst-1"):
+        """Fake ComfyUI Desktop with every file the background start needs."""
+        install = self.comfy_install("Desktop 설치")
+        python = install / "ComfyUI" / ".venv" / "Scripts" / "python.exe"
+        python.parent.mkdir(parents=True)
+        python.touch()
+        desktop = self.home / "Comfy Desktop"
+        models = desktop / "instance-model-paths" / f"{identifier}.yaml"
+        models.parent.mkdir(parents=True)
+        models.write_text("comfy.desktop_0:\n  base_path: 'X'\n", encoding="utf-8")
+        shared_in, shared_out = self.home / "공유 input", self.home / "공유 output"
+        shared_in.mkdir()
+        shared_out.mkdir()
+        self.put(desktop / "settings.json", {"inputDir": str(shared_in), "outputDir": str(shared_out), "installDir": str(self.home)})
+        self.put(desktop / "installations.json", [
+            {"id": "cloud", "status": "installed", "name": "Comfy Cloud", "remoteUrl": "https://cloud.comfy.org/"},
+            {"id": identifier, "status": "installed", "installPath": str(install)}])
+        return install, models, shared_in, shared_out
+
+    def test_desktop_backend_reads_desktop_files_without_changing_them(self):
+        install, models, shared_in, shared_out = self.full_comfy_desktop()
+        before = {path: path.read_bytes() for path in (self.home / "Comfy Desktop").rglob("*") if path.is_file()}
+        self.assertEqual(setup.desktop_backend(), {"auto_start": True, "base_dir": str(install), "models_config": str(models),
+                                                   "input_dir": str(shared_in), "output_dir": str(shared_out)})
+        self.assertEqual({path: path.read_bytes() for path in before}, before)
+
+    def test_desktop_backend_requires_every_file_and_a_plain_id(self):
+        install, models, *_ = self.full_comfy_desktop()
+        models.unlink()
+        self.assertIsNone(setup.desktop_backend())
+        listing = self.home / "Comfy Desktop" / "installations.json"
+        self.put(listing, [{"id": "../escape", "status": "installed", "installPath": str(install)}])
+        self.assertIsNone(setup.desktop_backend())
+        self.assertIsNone(setup.desktop_backend(appdata=str(self.root)))
+
+    def test_config_offers_background_start_and_saves_desktop_paths(self):
+        install, models, shared_in, shared_out = self.full_comfy_desktop()
+        answers = iter(["", "", str(self.root / "결과"), "y", "y"])
+        config = setup.prepare_config(self.root, lambda _: next(answers))
+        self.assertEqual(config["backend"], {"auto_start": True, "base_dir": str(install), "models_config": str(models),
+                                             "input_dir": str(shared_in), "output_dir": str(shared_out)})
+        self.assertEqual(setup.read_json(self.root / "config.json")["backend"], config["backend"])
+        self.assertIn("자동 시작: 사용 (", self.output.getvalue())
+
+    def test_config_background_start_declined_or_not_offered(self):
+        self.full_comfy_desktop()
+        for answers, label in ((["", "", "", "n", "y"], "declined"), (["", "http://127.0.0.1:8000", "", "y"], "other port")):
+            with self.subTest(label):
+                (self.root / "config.json").unlink(missing_ok=True)
+                feed = iter(answers)
+                config = setup.prepare_config(self.root, lambda _: next(feed))
+                self.assertEqual(config["backend"]["auto_start"], False)
+                self.assertNotIn("models_config", config["backend"])
+
+    def test_registration_follows_background_start_choice(self):
+        self.assertEqual(setup.launcher(self.root, self.python)["env"]["COMFYUI_MCP_AUTO_START"], "0")
+        entry = setup.launcher(self.root, self.python, auto_start=True)
+        self.assertEqual(entry["env"]["COMFYUI_MCP_AUTO_START"], "1")
+        calls = []
+        def runner(args, **kwargs):
+            calls.append(args)
+            data = {"projects": {self.root.as_posix(): {"mcpServers": {setup.NAME: {"type": "stdio", **entry}}}}}
+            self.put(self.code, data)
+            return "Added"
+        setup.register_code(self.root, self.code, entry, "local", cli="claude.exe", runner=runner)
+        env_args = calls[0][calls[0].index("--env") + 1:calls[0].index("--transport")]
+        self.assertIn("COMFYUI_MCP_AUTO_START=1", env_args)
+        self.assertNotIn("COMFYUI_MCP_AUTO_START=0", env_args)
+
     def test_desktop_installs_reads_only_installed_comfyui_folders(self):
         good = self.comfy_install("설치 A")
         no_main = self.home / "main.py 없음"
