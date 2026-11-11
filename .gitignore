@@ -26,3 +26,8 @@ characters/
 *.jpeg
 *.webp
 *.gif
+
+# README에 쓸 샘플 이미지는 docs/ 폴더에서만 허용
+!docs/*.png
+!docs/*.jpg
+!docs/*.webp

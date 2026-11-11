@@ -117,14 +117,13 @@ comfyui_status와 CLI check는 Qwen T2I 노드와 모델을 검사합니다.
 |---|---|---|
 | comfyui_status | 없음 | 서버와 워크플로/모델 목록 확인. ready, devices, output_dir 등 반환. 파일 생성 및 쓰기 권한 검사는 하지 않음 |
 | generate_image | prompt 필수, character/seed 선택 | Qwen 2.1 T2I 생성/저장 함수 실행. prompt_id, seed, files(PNG 경로 목록), metadata_file(JSON 경로), character 반환 |
-
 | edit_image | reference_image/instruction/character/seed/style_reference_image | Qwen 편집. 스타일 참조는 선택적이며 명시된 경우만 사용 |
 | create_character_draft | character_settings, prompt, seed 선택 | Qwen T2I 승인 대기 초안. 자동 등록 없음 |
 | create_character_scene | character, scene_description, seed/extra_references(이미지별로 가져올 것을 적은 목록)/pose_image·style_reference_image(바로가기) 선택 | 공식 reference_v1.png(필수)와 등록된 reference_v2.png…를 검증하여 Qwen 새 장면 생성. 장수 제한은 config.json references (기본 공식 4장, 전체 8장, 최대 16장) |
 | get_character | name | 설정과 참조 경로 조회 |
 | save_character | name 및 선택 설정 | 명시적으로 제공한 설정만 저장 |
 
-생성 크기는 기존 기본값인 1024×1024, 1장입니다. character는 `E:\AI\Outputs\캐릭터명` 저장용이며 프롬프트에 자동 삽입하지 않습니다. output-subdir는 이번 MCP 도구 인자에 노출하지 않았으며 CLI에서는 계속 사용할 수 있습니다. 반환값은 경로이며 이미지 바이너리/미리보기 전송은 하지 않습니다.
+생성 크기는 기존 기본값인 1024×1024, 1장입니다. character는 `<output_dir>\캐릭터명` 저장용이며 프롬프트에 자동 삽입하지 않습니다. output-subdir는 이번 MCP 도구 인자에 노출하지 않았으며 CLI에서는 계속 사용할 수 있습니다. 반환값은 경로이며 이미지 바이너리/미리보기 전송은 하지 않습니다.
 
 로그는 stderr, stdout은 SDK의 MCP 프로토콜 전용입니다. main()을 호출하지 않고 기존 함수를 import하므로 CLI의 결과 print는 실행되지 않습니다. 동기 API 작업은 별도 스레드에서 실행합니다. 같은 MCP 프로세스의 동시 생성은 거부하지만, Claude와 ChatGPT가 각각 서버를 시작하면 서로 다른 프로세스이므로 ComfyUI의 대기열에 함께 제출할 수 있습니다.
 
@@ -133,7 +132,7 @@ comfyui_status와 CLI check는 Qwen T2I 노드와 모델을 검사합니다.
 일반 Windows PowerShell에서:
 
 ```powershell
-cd E:\Dev\comfyui-automation
+cd <프로젝트 폴더>
 .\setup_mcp.ps1
 ```
 
@@ -162,14 +161,14 @@ STDIO 목록 검증: `.\.venv-mcp\Scripts\python.exe -B check_mcp_tools.py` (too
 4. Claude Desktop을 완전히 종료하고 재시작합니다.
 5. 먼저 “comfyui_status 도구로 연결 상태만 확인해줘. 이미지는 생성하지 마.”라고 요청합니다.
 
-설정에 사용할 값:
+설정에 사용할 값 (경로는 압축을 푼 실제 폴더로 바꾸세요):
 
 ```json
 {
   "mcpServers": {
     "comfyui-local": {
-      "command": "E:\\Dev\\comfyui-automation\\.venv-mcp\\Scripts\\python.exe",
-      "args": ["-B", "-u", "E:\\Dev\\comfyui-automation\\mcp_server.py"],
+      "command": "C:\\path\\to\\comfyui-automation\\.venv-mcp\\Scripts\\python.exe",
+      "args": ["-B", "-u", "C:\\path\\to\\comfyui-automation\\mcp_server.py"],
       "env": {"PYTHONUTF8": "1", "PYTHONDONTWRITEBYTECODE": "1"}
     }
   }

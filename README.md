@@ -1,5 +1,36 @@
 # ComfyUI 이미지 자동화 — Qwen Image 2.1
 
+로컬 ComfyUI를 Claude Desktop / Claude Code와 연결해, 평소 말투로 요청하면 이미지를 만들어 주는 MCP 서버입니다.
+"1920년대 프랑스 남자 바이올리니스트, 상반신 프로필로 그려줘"처럼 말하면 캐릭터 초안 생성, 등록한 캐릭터의 새 장면 생성,
+기존 이미지의 부분 편집을 처리하고, 결과 PNG와 설정 JSON은 내 PC에 저장합니다.
+
+<!-- 결과 예시: docs/ 폴더에 sample.png를 넣고 아래 줄의 주석을 풀어 주세요 -->
+<!-- ![결과 예시](docs/sample.png) -->
+
+## 필요한 것
+
+| 항목 | 내용 |
+|---|---|
+| 운영체제 | Windows (자동 설치기 `setup.ps1`이 Windows용입니다) |
+| 프로그램 | ComfyUI Desktop(로컬 실행), Python 3.13, Claude Desktop 또는 Claude Code |
+| 모델 | Qwen Image 2.1 모델 3개. 자동으로 받지 않으니 직접 설치해야 합니다 (아래 안내 참고) |
+| 그래픽카드 | 참조 이미지 장수 기본값은 VRAM 16GB 기준입니다. 사양에 맞게 `config.json`에서 조절하세요 |
+
+## 빠른 시작
+
+1. 이 저장소를 ZIP으로 받아 모두 압축 해제합니다.
+2. 압축 푼 폴더에서 PowerShell을 열고 아래 한 줄을 실행합니다.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1
+```
+
+3. 화면 질문에 답하고, Claude Desktop을 완전히 종료했다가 다시 실행합니다.
+
+사진이 있는 단계별 설명은 저장소의 PDF 가이드(`claude_comfyui_qwen_guide_v9.pdf`)를, 자세한 옵션은 [MCP_SETUP.md](MCP_SETUP.md)를 참고하세요.
+
+## 상세 설명
+
 Windows ZIP 배포의 간편 설치는 **[MCP_SETUP.md의 간편 설치 v1](MCP_SETUP.md#간편-설치-v1-windows-zip)**을 참고하세요.
 압축을 푼 폴더에서 `powershell -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1`을 실행하면
 Claude Desktop / Claude Code / 둘 다를 선택할 수 있습니다. Python 3.13과 실행 중인 로컬 ComfyUI가 필요합니다.
