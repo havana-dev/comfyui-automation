@@ -35,6 +35,8 @@ class InstallerTests(unittest.TestCase):
         self.code = self.home / ".claude.json"
         self.output = io.StringIO()
         self.enterContext(contextlib.redirect_stdout(self.output))
+        # Never let installer tests see the real Claude / ComfyUI Desktop data of this machine.
+        self.enterContext(patch.dict(os.environ, {"APPDATA": str(self.home), "LOCALAPPDATA": str(self.home)}))
 
     def put(self, path, data):
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -434,6 +436,49 @@ class InstallerTests(unittest.TestCase):
         (folder / "ComfyUI").mkdir(parents=True)
         (folder / "ComfyUI" / "main.py").touch()
         return folder
+
+    def store_claude_data(self, name="claude_pzs8sxrjxfjjc"):
+        """Current/Microsoft Store Claude layout: real data under LOCALAPPDATA, leftovers in APPDATA."""
+        data = self.home / "Claude-Data" / name
+        self.put(data / "config.json", {"app": "own settings"})
+        (self.home / "Claude-Data" / "README.txt").write_text("app readme", encoding="utf-8")
+        leftovers = self.home / "Claude"
+        leftovers.mkdir(exist_ok=True)
+        (leftovers / f".user-data-left.{name}").write_text("{}", encoding="utf-8")
+        return data / "claude_desktop_config.json"
+
+    def test_desktop_config_prefers_store_data_folder_over_leftover_appdata(self):
+        target = self.store_claude_data()
+        (self.home / "Claude-Data" / "claude_empty").mkdir()  # No Claude files: not a guess target.
+        self.assertEqual(setup.desktop_config_paths(), [target])
+
+    def test_desktop_config_falls_back_to_appdata_for_older_builds(self):
+        self.desktop.parent.mkdir()
+        self.assertEqual(setup.desktop_config_paths(), [self.desktop])
+        self.assertEqual(setup.desktop_config_paths(appdata=str(self.root), localappdata=str(self.root)), [])
+
+    def test_install_registers_store_claude_and_leaves_appdata_untouched(self):
+        target = self.store_claude_data()
+        self.put(target, {"preferences": {"keep": True}})
+        self.put(self.root / "config.json", {"base_url": "http://localhost:8000", "output_dir": str(self.root / "outputs")})
+        listed = json.dumps({"ok": True, "image_generation_requested": False, "tools": [{}] * 7})
+        ready = {"connected": True, "models_ready": True, "missing_models": [], "missing_nodes": [], "error": None}
+        with patch.object(setup, "diagnose", return_value=ready), patch.object(setup, "__file__", str(self.root / "setup_windows.py")), patch.object(setup, "ask", return_value="1"), patch.object(setup, "prepare_environment", return_value=self.python), patch.object(setup, "run_command", return_value=listed):
+            self.assertEqual(setup.main(), 0)
+        data = setup.read_json(target)
+        self.assertEqual(data["preferences"], {"keep": True})
+        self.assertTrue(setup.matches(data["mcpServers"][setup.NAME], self.entry))
+        self.assertFalse(self.desktop.exists())
+        self.assertIn(str(target), self.output.getvalue())
+
+    def test_install_without_any_claude_desktop_reports_failure(self):
+        self.put(self.root / "config.json", {"base_url": "http://localhost:8000", "output_dir": str(self.root / "outputs")})
+        listed = json.dumps({"ok": True, "image_generation_requested": False, "tools": [{}] * 7})
+        ready = {"connected": True, "models_ready": True, "missing_models": [], "missing_nodes": [], "error": None}
+        with patch.object(setup, "diagnose", return_value=ready), patch.object(setup, "__file__", str(self.root / "setup_windows.py")), patch.object(setup, "ask", return_value="1"), patch.object(setup, "prepare_environment", return_value=self.python), patch.object(setup, "run_command", return_value=listed):
+            self.assertEqual(setup.main(), 1)
+        self.assertIn("Claude Desktop MCP 등록: 실패", self.output.getvalue())
+        self.assertFalse(self.desktop.exists())
 
     def test_desktop_installs_reads_only_installed_comfyui_folders(self):
         good = self.comfy_install("설치 A")

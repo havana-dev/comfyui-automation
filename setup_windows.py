@@ -114,6 +114,31 @@ def register_desktop(path, entry):
     return "등록 완료 (Claude Desktop 완전 종료 후 재시작 필요)"
 
 
+def desktop_config_paths(appdata=None, localappdata=None):
+    """Claude Desktop config files to register in.
+
+    Current Claude builds (including the Microsoft Store one) keep app data in
+    %LOCALAPPDATA%\\Claude-Data\\claude_<id>\\ and leave only older files in %APPDATA%\\Claude,
+    so a config written there would be ignored. %APPDATA%\\Claude is used only for older builds.
+    """
+    local = os.environ.get("LOCALAPPDATA") if localappdata is None else localappdata
+    roaming = os.environ.get("APPDATA") if appdata is None else appdata
+    found = []
+    if local:
+        try:
+            folders = sorted((Path(local) / "Claude-Data").iterdir())
+        except OSError:
+            folders = []
+        for folder in folders:
+            # Only folders that already hold Claude's own files; never guess an empty one.
+            if folder.is_dir() and folder.name.lower().startswith("claude_") and any(
+                    (folder / name).is_file() for name in ("config.json", "claude_desktop_config.json")):
+                found.append(folder / "claude_desktop_config.json")
+    if not found and roaming and (Path(roaming) / "Claude").is_dir():
+        found.append(Path(roaming) / "Claude" / "claude_desktop_config.json")
+    return found
+
+
 def run_command(args, *, cwd, timeout=120):
     try:
         result = subprocess.run([str(arg) for arg in args], cwd=cwd, timeout=timeout,
@@ -413,13 +438,18 @@ def main():
     entry = launcher(root, python)
     outcomes = {}
     if target in ("1", "3"):
-        try:
-            directory = Path(os.environ["APPDATA"]) / "Claude"
-            if not directory.is_dir():
-                raise SetupError("Claude Desktop을 설치하고 한 번 실행한 뒤 다시 시도하세요: https://claude.ai/download")
-            outcomes["Claude Desktop MCP 등록"] = register_desktop(directory / "claude_desktop_config.json", entry)
-        except (SetupError, OSError, KeyError) as exc:
-            outcomes["Claude Desktop MCP 등록"] = "실패 — " + str(exc)
+        paths = desktop_config_paths()
+        if not paths:
+            outcomes["Claude Desktop MCP 등록"] = "실패 — Claude Desktop을 설치하고 한 번 실행한 뒤 다시 시도하세요: https://claude.ai/download"
+        else:
+            results, failed = [], False
+            for path in paths:
+                try:
+                    results.append(f"{register_desktop(path, entry)}: {path}")
+                except (SetupError, OSError) as exc:
+                    failed = True
+                    results.append(f"{exc}: {path}")
+            outcomes["Claude Desktop MCP 등록"] = ("실패 — " if failed else "") + " / ".join(results)
     if target in ("2", "3"):
         try:
             if os.environ.get("CLAUDE_CONFIG_DIR"):

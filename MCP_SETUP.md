@@ -51,7 +51,9 @@ Python 보조 파일은 `--diagnose`, `--help`/`-h`를 지원합니다.
 - `config.json`이 없을 때만 예제를 바탕으로 ComfyUI 폴더·API 주소·출력 폴더를 확인받아 만듭니다.
   결과 경로는 절대 경로로 저장합니다. 기존 `config.json`은 바이트 단위로 보존합니다.
 - `check_mcp_tools.py`로 initialize / tools/list를 확인합니다. tools/call과 이미지 생성은 하지 않습니다.
-- Desktop은 `%APPDATA%\Claude\claude_desktop_config.json`의 다른 MCP·기타 설정을 보존하여 병합합니다.
+- Desktop은 `claude_desktop_config.json`의 다른 MCP·기타 설정을 보존하여 병합합니다.
+  현재 Claude 앱(Microsoft Store판 포함)은 설정을 `%LOCALAPPDATA%\Claude-Data\claude_<ID>\`에 두므로 그 위치를 먼저 사용하고,
+  그 폴더가 없는 이전 버전에서만 `%APPDATA%\Claude\`를 사용합니다. 최신 앱에서 `%APPDATA%\Claude`에는 이전 파일만 남아 있어 그곳에 쓰면 적용되지 않습니다.
   기존 파일은 같은 폴더의 `파일명.backup-고유ID.bak`로 원본 전체를 백업합니다.
 - Code는 공식 `claude mcp add --transport stdio --scope ...`를 사용합니다.
   기본 `local`은 이 프로젝트만, 선택 `user`는 모든 프로젝트에 적용됩니다. 변경 전
@@ -158,7 +160,7 @@ STDIO 목록 검증: `.\.venv-mcp\Scripts\python.exe -B check_mcp_tools.py` (too
 
 1. 위 SDK 설치와 목록 테스트를 완료합니다.
 2. Claude Desktop → Settings → Developer → Edit Config를 엽니다.
-3. `%APPDATA%\Claude\claude_desktop_config.json`의 기존 `mcpServers` 안에 `claude_desktop_config.example.json`의 `comfyui-local` 항목을 병합합니다. 기존 다른 서버 설정을 덮어쓰지 마세요.
+3. Edit Config가 연 `claude_desktop_config.json`(최신 앱은 `%LOCALAPPDATA%\Claude-Data\claude_<ID>\`, 이전 버전은 `%APPDATA%\Claude\`)의 기존 `mcpServers` 안에 `claude_desktop_config.example.json`의 `comfyui-local` 항목을 병합합니다. 기존 다른 서버 설정을 덮어쓰지 마세요.
 4. Claude Desktop을 완전히 종료하고 재시작합니다.
 5. 먼저 “comfyui_status 도구로 연결 상태만 확인해줘. 이미지는 생성하지 마.”라고 요청합니다.
 
